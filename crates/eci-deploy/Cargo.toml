@@ -1,0 +1,12 @@
+[package]
+name = "eci-deploy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eci-core = { path = "../eci-core" }
+eci-github = { path = "../eci-github" }
+eci-docker = { path = "../eci-docker" }
+eci-db = { path = "../eci-db" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["rustls-tls"], default-features = false }

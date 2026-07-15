@@ -5,6 +5,7 @@ members = [
     "crates/eci-github",
     "crates/eci-docker",
     "crates/eci-db",
+    "crates/eci-deploy",
     "crates/eci-cli",
 ]
 
