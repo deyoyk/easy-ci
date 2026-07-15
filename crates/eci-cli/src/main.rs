@@ -82,7 +82,8 @@ async fn main() -> eci_core::error::Result<()> {
         Commands::Remove { app_name } => cmd_remove(&app_name).await,
         Commands::Status => cmd_status().await,
         Commands::Dashboard => {
-            println!("Dashboard coming soon!");
+            let state = eci_core::state::State::new()?;
+            eci_tui::run_dashboard(&state)?;
             Ok(())
         }
     }

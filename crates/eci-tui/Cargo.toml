@@ -1,0 +1,10 @@
+[package]
+name = "eci-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eci-core = { path = "../eci-core" }
+eci-docker = { path = "../eci-docker" }
+ratatui = "0.28"
+crossterm = "0.28"

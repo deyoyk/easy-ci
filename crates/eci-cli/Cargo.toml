@@ -13,6 +13,7 @@ eci-github = { path = "../eci-github" }
 eci-docker = { path = "../eci-docker" }
 eci-db = { path = "../eci-db" }
 eci-deploy = { path = "../eci-deploy" }
+eci-tui = { path = "../eci-tui" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 dialoguer = { version = "0.11", features = ["password"] }

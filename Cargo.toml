@@ -6,6 +6,7 @@ members = [
     "crates/eci-docker",
     "crates/eci-db",
     "crates/eci-deploy",
+    "crates/eci-tui",
     "crates/eci-cli",
 ]
 
