@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use console::Style;
-use dialoguer::{Input, Select};
+use dialoguer::{Confirm, Input, Select};
 
 #[derive(Parser)]
 #[command(name = "eci", about = "Internal CI/CD tool", version)]
@@ -17,7 +17,6 @@ enum Commands {
         action: ProjectAction,
     },
     Deploy {
-        repo: String,
         #[arg(short, long)]
         db: Option<String>,
         #[arg(long)]
@@ -68,12 +67,11 @@ async fn main() -> eci_core::error::Result<()> {
             ProjectAction::Delete { name } => cmd_project_delete(&name).await,
         },
         Commands::Deploy {
-            repo,
             db,
             db_only,
             port,
             watch,
-        } => cmd_deploy(&repo, db.as_deref(), db_only, port, watch).await,
+        } => cmd_deploy(db.as_deref(), db_only, port, watch).await,
         Commands::Apps => cmd_apps().await,
         Commands::Logs { app_name, lines } => cmd_logs(&app_name, lines).await,
         Commands::Rollback { app_name } => cmd_rollback(&app_name).await,
@@ -97,14 +95,8 @@ async fn cmd_init() -> eci_core::error::Result<()> {
         .with_prompt("GitHub token")
         .interact_text()?;
 
-    let org: String = Input::new()
-        .with_prompt("Default org (optional)")
-        .default(String::new())
-        .interact_text()?;
-
     let mut config = eci_core::config::Config::load()?;
     config.github.token = token;
-    config.github.default_org = if org.is_empty() { None } else { Some(org) };
     config.save()?;
 
     println!("Config saved to ~/.eci/config.toml");
@@ -162,7 +154,6 @@ async fn cmd_project_delete(name: &str) -> eci_core::error::Result<()> {
 }
 
 async fn cmd_deploy(
-    repo: &str,
     db: Option<&str>,
     _db_only: bool,
     port: Option<u16>,
@@ -170,26 +161,76 @@ async fn cmd_deploy(
 ) -> eci_core::error::Result<()> {
     let config = eci_core::config::Config::load()?;
     let state = eci_core::state::State::new()?;
-    let docker = eci_docker::DockerClient::new().await?;
-    let github = eci_github::GitHubClient::new(&config).await?;
 
+    // Step 1: Select or create project
     let projects = state.list_projects()?;
-    if projects.is_empty() {
-        println!("No projects. Create one first: eci project create");
+    let project_name = if projects.is_empty() {
+        println!("No projects found. Let's create one first.");
+        let name: String = Input::new()
+            .with_prompt("Project name")
+            .interact_text()?;
+        let description: String = Input::new()
+            .with_prompt("Description (optional)")
+            .default(String::new())
+            .interact_text()?;
+        let desc = if description.is_empty() { None } else { Some(description.as_str()) };
+        state.create_project(&name, desc)?;
+        println!("Project '{}' created!", name);
+        name
+    } else {
+        let project_names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        if projects.len() == 1 {
+            println!("Using project: {}", project_names[0]);
+            project_names[0].to_string()
+        } else {
+            let idx = Select::new()
+                .with_prompt("Select project")
+                .items(&project_names)
+                .default(0)
+                .interact()?;
+            project_names[idx].to_string()
+        }
+    };
+
+    // Step 2: Fetch repos and let user select
+    let github = eci_github::GitHubClient::new(&config).await?;
+    println!("Fetching repositories...");
+    let repos = github.list_my_repos().await?;
+
+    if repos.is_empty() {
+        println!("No repositories found with this token.");
         return Ok(());
     }
 
-    let project_names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
-    let project_idx = if projects.len() == 1 {
-        0
-    } else {
-        Select::new()
-            .with_prompt("Select project")
-            .items(&project_names)
-            .default(0)
-            .interact()?
-    };
+    let repo_labels: Vec<String> = repos.iter().map(|r| {
+        let desc = r.description.as_deref().unwrap_or("");
+        if desc.is_empty() {
+            r.full_name.clone()
+        } else {
+            format!("{} — {}", r.full_name, desc)
+        }
+    }).collect();
 
+    let repo_idx = Select::new()
+        .with_prompt("Select repository")
+        .items(&repo_labels)
+        .default(0)
+        .interact()?;
+
+    let selected_repo = &repos[repo_idx];
+    println!("Selected: {}", selected_repo.full_name);
+
+    // Step 3: Confirm
+    if !Confirm::new()
+        .with_prompt("Deploy this repository?")
+        .default(true)
+        .interact()?
+    {
+        println!("Deploy cancelled.");
+        return Ok(());
+    }
+
+    // Step 4: App name and description
     let app_name: String = Input::new()
         .with_prompt("App name (unique)")
         .interact_text()?;
@@ -199,15 +240,13 @@ async fn cmd_deploy(
         .default(String::new())
         .interact_text()?;
 
-    let desc = if description.is_empty() {
-        None
-    } else {
-        Some(description.as_str())
-    };
+    let desc = if description.is_empty() { None } else { Some(description.as_str()) };
 
+    // Step 5: Deploy
+    let docker = eci_docker::DockerClient::new().await?;
     let deploy_engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
     let result = deploy_engine
-        .deploy(repo, &app_name, project_names[project_idx], desc, db, port)
+        .deploy(&selected_repo.full_name, &app_name, &project_name, desc, db, port)
         .await?;
 
     println!("Deployed {} successfully!", app_name);

@@ -62,6 +62,28 @@ impl GitHubClient {
         }
     }
 
+    pub async fn list_my_repos(&self) -> Result<Vec<RepoInfo>> {
+        let repos = self
+            .octocrab
+            .current()
+            .list_repos_for_authenticated_user()
+            .send()
+            .await
+            .map_err(|e| EciError::GitHub(format!("Failed to list repos: {}", e)))?;
+
+        Ok(repos
+            .items
+            .into_iter()
+            .map(|r| RepoInfo {
+                full_name: r.full_name.unwrap_or_default(),
+                name: r.name,
+                description: r.description,
+                default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
+                clone_url: r.clone_url.map(|u| u.to_string()).unwrap_or_default(),
+            })
+            .collect())
+    }
+
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
         let url_with_token = clone_url
             .replacen("https://", &format!("https://x:{}@", token), 1);
