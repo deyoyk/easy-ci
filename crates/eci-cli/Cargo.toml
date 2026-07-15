@@ -1,0 +1,13 @@
+[package]
+name = "eci-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "eci"
+path = "src/main.rs"
+
+[dependencies]
+eci-core = { path = "../eci-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
