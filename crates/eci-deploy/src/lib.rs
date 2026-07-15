@@ -6,6 +6,8 @@ use eci_db::DbProvisioner;
 use eci_docker::DockerClient;
 use eci_github::GitHubClient;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub struct DeployEngine<'a> {
@@ -132,5 +134,61 @@ impl<'a> DeployEngine<'a> {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
         false
+    }
+}
+
+pub struct Poller {
+    running: Arc<AtomicBool>,
+}
+
+impl Poller {
+    pub fn new() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub async fn start(
+        &self,
+        app_name: &str,
+        repo: &str,
+        _branch: &str,
+        config: Config,
+        state: State,
+        docker: DockerClient,
+    ) -> Result<()> {
+        self.running.store(true, Ordering::SeqCst);
+        let running = self.running.clone();
+        let app_name = app_name.to_string();
+        let repo = repo.to_string();
+
+        let github = GitHubClient::new(&config).await.ok();
+        let mut last_sha = String::new();
+
+        while running.load(Ordering::SeqCst) {
+            if let Some(gh) = &github {
+                if let Ok(repos) = gh.list_repos(&repo).await {
+                    if let Some(r) = repos.first() {
+                        let current_sha = r.default_branch.clone();
+                        if !last_sha.is_empty() && current_sha != last_sha {
+                            println!("New commit detected, deploying {}...", app_name);
+                            let deploy_engine =
+                                DeployEngine::new(&docker, gh, &state, &config);
+                            let _ = deploy_engine
+                                .deploy(&repo, &app_name, &app_name, None, None, None)
+                                .await;
+                        }
+                        last_sha = current_sha;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(config.deploy.poll_interval_secs)).await;
+        }
+
+        Ok(())
+    }
+
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
     }
 }
