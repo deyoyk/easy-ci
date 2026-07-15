@@ -18,4 +18,12 @@ pub enum EciError {
     Sqlite(#[from] rusqlite::Error),
 }
 
+impl From<dialoguer::Error> for EciError {
+    fn from(e: dialoguer::Error) -> Self {
+        match e {
+            dialoguer::Error::IO(io_err) => EciError::Io(io_err),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, EciError>;
