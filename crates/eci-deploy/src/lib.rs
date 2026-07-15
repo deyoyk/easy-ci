@@ -152,7 +152,7 @@ impl Poller {
         &self,
         app_name: &str,
         repo: &str,
-        _branch: &str,
+        branch: &str,
         config: Config,
         state: State,
         docker: DockerClient,
@@ -161,28 +161,43 @@ impl Poller {
         let running = self.running.clone();
         let app_name = app_name.to_string();
         let repo = repo.to_string();
+        let branch = branch.to_string();
+        let poll_interval = Duration::from_secs(config.deploy.poll_interval_secs);
 
-        let github = GitHubClient::new(&config).await.ok();
+        let github = match GitHubClient::new(&config).await {
+            Ok(client) => Some(client),
+            Err(e) => {
+                eprintln!("Failed to create GitHub client: {}", e);
+                None
+            }
+        };
         let mut last_sha = String::new();
+
+        let (owner, repo_name) = repo.split_once('/').unwrap_or((&repo, ""));
 
         while running.load(Ordering::SeqCst) {
             if let Some(gh) = &github {
-                if let Ok(repos) = gh.list_repos(&repo).await {
-                    if let Some(r) = repos.first() {
-                        let current_sha = r.default_branch.clone();
+                match gh.get_branch_sha(owner, repo_name, &branch).await {
+                    Ok(current_sha) => {
                         if !last_sha.is_empty() && current_sha != last_sha {
-                            println!("New commit detected, deploying {}...", app_name);
+                            println!("New commit detected ({}), deploying {}...", &current_sha[..8], app_name);
                             let deploy_engine =
                                 DeployEngine::new(&docker, gh, &state, &config);
-                            let _ = deploy_engine
+                            if let Err(e) = deploy_engine
                                 .deploy(&repo, &app_name, &app_name, None, None, None)
-                                .await;
+                                .await
+                            {
+                                eprintln!("Deploy failed for {}: {}", app_name, e);
+                            }
                         }
                         last_sha = current_sha;
                     }
+                    Err(e) => {
+                        eprintln!("Failed to get branch SHA for {}/{}: {}", owner, repo_name, e);
+                    }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(config.deploy.poll_interval_secs)).await;
+            tokio::time::sleep(poll_interval).await;
         }
 
         Ok(())

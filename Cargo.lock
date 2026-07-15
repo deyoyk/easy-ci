@@ -373,6 +373,7 @@ dependencies = [
  "eci-db",
  "eci-docker",
  "eci-github",
+ "octocrab",
  "reqwest",
  "tokio",
 ]

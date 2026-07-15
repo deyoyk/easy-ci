@@ -1,5 +1,6 @@
 use eci_core::config::Config;
 use eci_core::error::{EciError, Result};
+use octocrab::params::repos::Reference;
 use octocrab::Octocrab;
 use std::path::PathBuf;
 
@@ -45,6 +46,20 @@ impl GitHubClient {
                 clone_url: r.clone_url.map(|u| u.to_string()).unwrap_or_default(),
             })
             .collect())
+    }
+
+    pub async fn get_branch_sha(&self, owner: &str, repo: &str, branch: &str) -> Result<String> {
+        let reference = self
+            .octocrab
+            .repos(owner, repo)
+            .get_ref(&Reference::Branch(branch.to_string()))
+            .await
+            .map_err(|e| EciError::GitHub(format!("Failed to get ref: {}", e)))?;
+        match reference.object {
+            octocrab::models::repos::Object::Commit { sha, .. } => Ok(sha),
+            octocrab::models::repos::Object::Tag { sha, .. } => Ok(sha),
+            _ => Err(EciError::GitHub("Unexpected ref type".to_string())),
+        }
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
