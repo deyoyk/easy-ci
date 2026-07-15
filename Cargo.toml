@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/eci-core",
     "crates/eci-github",
+    "crates/eci-docker",
     "crates/eci-cli",
 ]
 
