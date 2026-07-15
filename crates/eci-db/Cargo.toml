@@ -1,0 +1,9 @@
+[package]
+name = "eci-db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eci-core = { path = "../eci-core" }
+eci-docker = { path = "../eci-docker" }
+rand = "0.8"
