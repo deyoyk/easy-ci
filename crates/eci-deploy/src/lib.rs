@@ -59,17 +59,29 @@ impl<'a> DeployEngine<'a> {
 
         println!("Building image...");
         let image_tag = format!("{}:latest", app_name);
-        self.docker
+        let build_result = self.docker
             .build_image(app_name, &app_dir.join("Dockerfile"))
-            .await?;
+            .await;
+
+        if let Err(e) = build_result {
+            let _ = std::fs::remove_dir_all(&app_dir);
+            return Err(e);
+        }
 
         let app =
             self.state
                 .create_app(app_name, project_name, repo, description, &image_tag)?;
 
         println!("Starting container...");
-        let container_id = self.docker.run_container(app_name, &image_tag, port).await?;
+        let container_result = self.docker.run_container(app_name, &image_tag, port).await;
 
+        if let Err(e) = container_result {
+            let _ = self.state.delete_app(app_name);
+            let _ = std::fs::remove_dir_all(&app_dir);
+            return Err(e);
+        }
+
+        let container_id = container_result.unwrap();
         self.state.update_app_status(app_name, &AppStatus::Running)?;
 
         let mut db_info = None;
@@ -85,6 +97,8 @@ impl<'a> DeployEngine<'a> {
         if !healthy {
             self.state.update_app_status(app_name, &AppStatus::Unhealthy)?;
         }
+
+        let _ = std::fs::remove_dir_all(&app_dir);
 
         println!("Deploy complete!");
         let mut updated_app = app;

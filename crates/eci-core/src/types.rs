@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -28,6 +29,17 @@ pub enum AppStatus {
     Stopped,
     Unhealthy,
     Deploying,
+}
+
+impl fmt::Display for AppStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Running => write!(f, "running"),
+            Self::Stopped => write!(f, "stopped"),
+            Self::Unhealthy => write!(f, "unhealthy"),
+            Self::Deploying => write!(f, "deploying"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

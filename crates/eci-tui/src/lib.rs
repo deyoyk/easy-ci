@@ -27,18 +27,26 @@ pub fn run_dashboard(state: &State) -> eci_core::error::Result<()> {
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
                 match key.code {
-                    KeyCode::Char('q') => {
+                    // Quit: q or Esc
+                    KeyCode::Char('q') | KeyCode::Esc => {
                         app.should_quit = true;
                     }
-                    KeyCode::F(2) => {
-                        app.active_tab = crate::app::ActiveTab::Projects;
+                    // Tab: cycle through tabs
+                    KeyCode::Tab => {
+                        app.next_tab();
                     }
-                    KeyCode::F(3) => {
-                        app.active_tab = crate::app::ActiveTab::Apps;
+                    // Shift+Tab: cycle backwards through tabs
+                    KeyCode::BackTab => {
+                        app.previous_tab();
                     }
-                    KeyCode::F(4) => {
-                        app.active_tab = crate::app::ActiveTab::Logs;
+                    // Left/Right: also cycle tabs
+                    KeyCode::Left => {
+                        app.previous_tab();
                     }
+                    KeyCode::Right => {
+                        app.next_tab();
+                    }
+                    // Up/Down or j/k: navigate within current tab
                     KeyCode::Up | KeyCode::Char('k') => {
                         match app.active_tab {
                             crate::app::ActiveTab::Projects => app.previous_project(),
@@ -52,6 +60,10 @@ pub fn run_dashboard(state: &State) -> eci_core::error::Result<()> {
                             crate::app::ActiveTab::Apps => app.next_app(),
                             _ => {}
                         }
+                    }
+                    // Enter: select/expand item
+                    KeyCode::Enter => {
+                        // Future: open logs for selected app, etc.
                     }
                     _ => {}
                 }

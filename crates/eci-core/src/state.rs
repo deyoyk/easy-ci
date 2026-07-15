@@ -204,4 +204,11 @@ impl State {
             None => Ok(None),
         }
     }
+
+    pub fn delete_app(&self, name: &str) -> Result<bool> {
+        let rows = self
+            .conn
+            .execute("DELETE FROM apps WHERE name = ?1", params![name])?;
+        Ok(rows > 0)
+    }
 }

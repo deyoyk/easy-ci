@@ -26,6 +26,7 @@ pub struct DeployConfig {
     pub poll_interval_secs: u64,
     pub health_check_timeout_secs: u64,
     pub auto_rollback_on_unhealthy: bool,
+    pub auto_deploy_on_commit: bool,
 }
 
 impl Default for Config {
@@ -42,6 +43,7 @@ impl Default for Config {
                 poll_interval_secs: 30,
                 health_check_timeout_secs: 60,
                 auto_rollback_on_unhealthy: true,
+                auto_deploy_on_commit: true,
             },
         }
     }

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tar::Builder as TarBuilder;
 
+#[derive(Clone)]
 pub struct DockerClient {
     docker: Docker,
 }

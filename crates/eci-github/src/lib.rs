@@ -63,25 +63,112 @@ impl GitHubClient {
     }
 
     pub async fn list_my_repos(&self) -> Result<Vec<RepoInfo>> {
-        let repos = self
-            .octocrab
-            .current()
-            .list_repos_for_authenticated_user()
-            .send()
-            .await
-            .map_err(|e| EciError::GitHub(format!("Failed to list repos: {}", e)))?;
+        let mut all_repos = Vec::new();
+        let mut page = 1u8;
 
-        Ok(repos
-            .items
-            .into_iter()
-            .map(|r| RepoInfo {
-                full_name: r.full_name.unwrap_or_default(),
-                name: r.name,
-                description: r.description,
-                default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
-                clone_url: r.clone_url.map(|u| u.to_string()).unwrap_or_default(),
-            })
-            .collect())
+        loop {
+            let repos = self
+                .octocrab
+                .current()
+                .list_repos_for_authenticated_user()
+                .per_page(100)
+                .page(page)
+                .send()
+                .await
+                .map_err(|e| EciError::GitHub(format!("Failed to list repos: {}", e)))?;
+
+            let items: Vec<RepoInfo> = repos
+                .items
+                .into_iter()
+                .map(|r| RepoInfo {
+                    full_name: r.full_name.unwrap_or_default(),
+                    name: r.name,
+                    description: r.description,
+                    default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
+                    clone_url: r.clone_url.map(|u| u.to_string()).unwrap_or_default(),
+                })
+                .collect();
+
+            let count = items.len();
+            all_repos.extend(items);
+
+            if count < 100 {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+
+        Ok(all_repos)
+    }
+
+    pub async fn list_org_repos(&self, org: &str) -> Result<Vec<RepoInfo>> {
+        let mut all_repos = Vec::new();
+        let mut page = 1u8;
+
+        loop {
+            let repos = self
+                .octocrab
+                .orgs(org)
+                .list_repos()
+                .per_page(100)
+                .page(page)
+                .send()
+                .await
+                .map_err(|e| EciError::GitHub(format!("Failed to list org repos: {}", e)))?;
+
+            let items: Vec<RepoInfo> = repos
+                .items
+                .into_iter()
+                .map(|r| RepoInfo {
+                    full_name: r.full_name.unwrap_or_default(),
+                    name: r.name,
+                    description: r.description,
+                    default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
+                    clone_url: r.clone_url.map(|u| u.to_string()).unwrap_or_default(),
+                })
+                .collect();
+
+            let count = items.len();
+            all_repos.extend(items);
+
+            if count < 100 {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+
+        Ok(all_repos)
+    }
+
+    pub async fn list_all_repos(&self) -> Result<Vec<RepoInfo>> {
+        let mut all_repos = self.list_my_repos().await?;
+
+        // Get unique orgs from repos we already have
+        let mut orgs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for repo in &all_repos {
+            if let Some(owner) = repo.full_name.split('/').next() {
+                // Only fetch org repos if we don't already have them
+                if !all_repos.iter().any(|r| r.full_name.starts_with(&format!("{}/", owner))) {
+                    orgs.insert(owner.to_string());
+                }
+            }
+        }
+
+        // Fetch repos from each org
+        for org in orgs {
+            if let Ok(org_repos) = self.list_org_repos(&org).await {
+                for repo in org_repos {
+                    if !all_repos.iter().any(|r| r.full_name == repo.full_name) {
+                        all_repos.push(repo);
+                    }
+                }
+            }
+        }
+
+        // Sort by full_name for consistent display
+        all_repos.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+
+        Ok(all_repos)
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {

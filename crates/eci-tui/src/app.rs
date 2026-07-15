@@ -1,10 +1,36 @@
 use eci_core::state::State;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum ActiveTab {
     Projects,
     Apps,
     Logs,
+}
+
+impl ActiveTab {
+    pub fn next(self) -> Self {
+        match self {
+            ActiveTab::Projects => ActiveTab::Apps,
+            ActiveTab::Apps => ActiveTab::Logs,
+            ActiveTab::Logs => ActiveTab::Projects,
+        }
+    }
+
+    pub fn previous(self) -> Self {
+        match self {
+            ActiveTab::Projects => ActiveTab::Logs,
+            ActiveTab::Apps => ActiveTab::Projects,
+            ActiveTab::Logs => ActiveTab::Apps,
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            ActiveTab::Projects => 0,
+            ActiveTab::Apps => 1,
+            ActiveTab::Logs => 2,
+        }
+    }
 }
 
 pub struct App {
@@ -30,6 +56,14 @@ impl App {
             logs: Vec::new(),
             should_quit: false,
         })
+    }
+
+    pub fn next_tab(&mut self) {
+        self.active_tab = self.active_tab.next();
+    }
+
+    pub fn previous_tab(&mut self) {
+        self.active_tab = self.active_tab.previous();
     }
 
     pub fn next_project(&mut self) {

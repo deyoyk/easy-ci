@@ -1,9 +1,18 @@
 use clap::{Parser, Subcommand};
-use console::Style;
+use colored::*;
 use dialoguer::{Confirm, Input, Select};
 
+fn brand<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(108, 92, 231).bold() }
+fn success<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(0, 184, 148).bold() }
+fn warning<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(253, 203, 110) }
+fn dim<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(99, 110, 114) }
+fn bold_text<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(223, 230, 233).bold() }
+fn header<S: fmt::Display>(s: S) -> ColoredString { s.to_string().truecolor(108, 92, 231).bold().underline() }
+
+use std::fmt;
+
 #[derive(Parser)]
-#[command(name = "eci", about = "Internal CI/CD tool", version)]
+#[command(name = "eci", about = "easy-ci — internal deployment tool", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -18,41 +27,39 @@ enum Commands {
     },
     Deploy {
         #[arg(short, long)]
-        db: Option<String>,
-        #[arg(long)]
-        db_only: bool,
+        project: Option<String>,
         #[arg(short, long)]
-        port: Option<u16>,
-        #[arg(long)]
-        watch: bool,
+        branch: Option<String>,
     },
     Apps,
     Logs {
-        app_name: String,
-        #[arg(short, long, default_value = "100")]
-        lines: usize,
-    },
-    Rollback {
-        app_name: String,
+        name: String,
     },
     Stop {
-        app_name: String,
-    },
-    Start {
-        app_name: String,
+        name: String,
     },
     Remove {
-        app_name: String,
+        name: String,
     },
-    Status,
+    Status {
+        name: String,
+    },
     Dashboard,
+    Webhook {
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+        #[arg(short, long)]
+        secret: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
 enum ProjectAction {
     Create,
     List,
-    Delete { name: String },
+    Delete {
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -60,232 +67,293 @@ async fn main() -> eci_core::error::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init => cmd_init().await,
+        Commands::Init => cmd_init()?,
         Commands::Project { action } => match action {
-            ProjectAction::Create => cmd_project_create().await,
-            ProjectAction::List => cmd_project_list().await,
-            ProjectAction::Delete { name } => cmd_project_delete(&name).await,
+            ProjectAction::Create => cmd_project_create()?,
+            ProjectAction::List => cmd_project_list()?,
+            ProjectAction::Delete { name } => cmd_project_delete(&name)?,
         },
-        Commands::Deploy {
-            db,
-            db_only,
-            port,
-            watch,
-        } => cmd_deploy(db.as_deref(), db_only, port, watch).await,
-        Commands::Apps => cmd_apps().await,
-        Commands::Logs { app_name, lines } => cmd_logs(&app_name, lines).await,
-        Commands::Rollback { app_name } => cmd_rollback(&app_name).await,
-        Commands::Stop { app_name } => cmd_stop(&app_name).await,
-        Commands::Start { app_name } => cmd_start(&app_name).await,
-        Commands::Remove { app_name } => cmd_remove(&app_name).await,
-        Commands::Status => cmd_status().await,
-        Commands::Dashboard => {
-            let state = eci_core::state::State::new()?;
-            eci_tui::run_dashboard(&state)?;
-            Ok(())
-        }
+        Commands::Deploy { project, branch } => cmd_deploy(project, branch).await?,
+        Commands::Apps => cmd_apps()?,
+        Commands::Logs { name } => cmd_logs(&name).await?,
+        Commands::Stop { name } => cmd_stop(&name).await?,
+        Commands::Remove { name } => cmd_remove(&name).await?,
+        Commands::Status { name } => cmd_status(&name)?,
+        Commands::Dashboard => cmd_dashboard()?,
+        Commands::Webhook { port, secret } => cmd_webhook(port, secret).await?,
     }
-}
 
-async fn cmd_init() -> eci_core::error::Result<()> {
-    let title = Style::new().bold().dim();
-    println!("{}", title.apply_to("easy-ci initialization"));
-
-    let token: String = Input::new()
-        .with_prompt("GitHub token")
-        .interact_text()?;
-
-    let mut config = eci_core::config::Config::load()?;
-    config.github.token = token;
-    config.save()?;
-
-    println!("Config saved to ~/.eci/config.toml");
     Ok(())
 }
 
-async fn cmd_project_create() -> eci_core::error::Result<()> {
-    let state = eci_core::state::State::new()?;
+fn print_banner() {
+    println!();
+    println!("  {}", brand("⚡ easy-ci"));
+    println!();
+}
 
-    let name: String = Input::new()
-        .with_prompt("Project name")
-        .interact_text()?;
+fn cmd_init() -> eci_core::error::Result<()> {
+    print_banner();
 
-    let description: String = Input::new()
-        .with_prompt("Description (optional)")
-        .default(String::new())
-        .interact_text()?;
+    let existing = eci_core::config::Config::load();
+    if existing.is_ok() {
+        println!("  {}  Already initialized", success("✔"));
+        return Ok(());
+    }
 
-    let desc = if description.is_empty() {
-        None
-    } else {
-        Some(description.as_str())
+    println!("  {}", header("Let's set up easy-ci"));
+    println!();
+
+    let github_token: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("GitHub token")
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    let host: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Docker host")
+        .default("unix:///var/run/docker.sock".into())
+        .interact_text()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    let config = eci_core::config::Config {
+        github: eci_core::config::GitHubConfig {
+            token: github_token,
+            default_org: None,
+        },
+        docker: eci_core::config::DockerConfig { host },
+        deploy: eci_core::config::DeployConfig {
+            poll_interval_secs: 30,
+            health_check_timeout_secs: 60,
+            auto_rollback_on_unhealthy: true,
+            auto_deploy_on_commit: true,
+        },
     };
 
-    state.create_project(&name, desc)?;
-    println!("Project '{}' created!", name);
+    config.save()?;
+    println!();
+    println!("  {}  Config saved to ~/.eci/config.toml", success("✔"));
+    println!();
     Ok(())
 }
 
-async fn cmd_project_list() -> eci_core::error::Result<()> {
+fn cmd_project_create() -> eci_core::error::Result<()> {
+    print_banner();
+
+    let name: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Project name")
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    let desc: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Description (optional)")
+        .default("".into())
+        .interact_text()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    let state = eci_core::state::State::new()?;
+    state.create_project(&name, if desc.is_empty() { None } else { Some(&desc) })?;
+
+    println!();
+    println!("  {}  Project {} created", success("✔"), bold_text(&name));
+    println!();
+    Ok(())
+}
+
+fn cmd_project_list() -> eci_core::error::Result<()> {
+    print_banner();
+
     let state = eci_core::state::State::new()?;
     let projects = state.list_projects()?;
 
     if projects.is_empty() {
-        println!("No projects. Create one with: eci project create");
+        println!("  {}", dim("No projects yet. Run: eci project create"));
         return Ok(());
     }
 
-    let header = Style::new().bold();
-    println!("{}", header.apply_to("Projects:"));
+    println!("  {}", header(format!("Projects ({})", projects.len())));
+    println!();
     for p in &projects {
-        println!("  {} - {}", p.name, p.description.as_deref().unwrap_or(""));
+        println!("    {} {}", success("●"), bold_text(&p.name));
+        if let Some(desc) = &p.description {
+            println!("      {}", dim(desc));
+        }
     }
+    println!();
     Ok(())
 }
 
-async fn cmd_project_delete(name: &str) -> eci_core::error::Result<()> {
+fn cmd_project_delete(name: &str) -> eci_core::error::Result<()> {
+    print_banner();
+
+    let confirmed = Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(format!("Delete project '{}'?", name))
+        .default(false)
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    if !confirmed {
+        println!("  {}", dim("Cancelled"));
+        return Ok(());
+    }
+
     let state = eci_core::state::State::new()?;
-    if state.delete_project(name)? {
-        println!("Project '{}' deleted!", name);
-    } else {
-        println!("Project '{}' not found.", name);
-    }
+    state.delete_project(name)?;
+    println!();
+    println!("  {}  Project {} deleted", success("✔"), bold_text(name));
+    println!();
     Ok(())
 }
 
-async fn cmd_deploy(
-    db: Option<&str>,
-    _db_only: bool,
-    port: Option<u16>,
-    _watch: bool,
-) -> eci_core::error::Result<()> {
+async fn cmd_deploy(project: Option<String>, branch: Option<String>) -> eci_core::error::Result<()> {
+    print_banner();
+
     let config = eci_core::config::Config::load()?;
     let state = eci_core::state::State::new()?;
+    let github = eci_github::GitHubClient::new(&config).await?;
 
-    // Step 1: Select or create project
-    let projects = state.list_projects()?;
-    let project_name = if projects.is_empty() {
-        println!("No projects found. Let's create one first.");
-        let name: String = Input::new()
-            .with_prompt("Project name")
-            .interact_text()?;
-        let description: String = Input::new()
-            .with_prompt("Description (optional)")
-            .default(String::new())
-            .interact_text()?;
-        let desc = if description.is_empty() { None } else { Some(description.as_str()) };
-        state.create_project(&name, desc)?;
-        println!("Project '{}' created!", name);
-        name
-    } else {
-        let project_names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
-        if projects.len() == 1 {
-            println!("Using project: {}", project_names[0]);
-            project_names[0].to_string()
-        } else {
-            let idx = Select::new()
-                .with_prompt("Select project")
-                .items(&project_names)
-                .default(0)
-                .interact()?;
-            project_names[idx].to_string()
+    // Select or create project
+    let project_name = match project {
+        Some(p) => p,
+        None => {
+            let projects = state.list_projects()?;
+            let choices: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+
+            if choices.is_empty() {
+                println!("  {}", dim("No projects yet. Let's create one."));
+                println!();
+                let name: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("Project name")
+                    .interact()
+                    .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+                state.create_project(&name, None)?;
+                name
+            } else {
+                let selection = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("Select project")
+                    .items(&choices)
+                    .default(0)
+                    .interact()
+                    .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+                choices[selection].to_string()
+            }
         }
     };
 
-    // Step 2: Fetch repos and let user select
-    let github = eci_github::GitHubClient::new(&config).await?;
-    println!("Fetching repositories...");
-    let repos = github.list_my_repos().await?;
+    // Fetch all repos with pagination
+    println!();
+    print!("  {}", dim("Fetching repositories..."));
 
-    if repos.is_empty() {
-        println!("No repositories found with this token.");
+    let all_repos = github.list_all_repos().await?;
+
+    println!(" {}", success(format!("found {} repos", all_repos.len())));
+
+    if all_repos.is_empty() {
+        println!();
+        println!("  {}", dim("No repositories found. Check your GitHub token."));
         return Ok(());
     }
 
-    let repo_labels: Vec<String> = repos.iter().map(|r| {
-        let desc = r.description.as_deref().unwrap_or("");
-        if desc.is_empty() {
-            r.full_name.clone()
-        } else {
-            format!("{} — {}", r.full_name, desc)
-        }
-    }).collect();
+    // Build repo choices with descriptions
+    let repo_items: Vec<String> = all_repos
+        .iter()
+        .map(|r| {
+            let desc = r.description.as_deref().unwrap_or("no description");
+            let truncated = if desc.len() > 50 { &desc[..50] } else { desc };
+            format!("{:<45} {}", r.full_name, truncated)
+        })
+        .collect();
 
-    let repo_idx = Select::new()
+    let repo_selection = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
         .with_prompt("Select repository")
-        .items(&repo_labels)
+        .items(&repo_items)
         .default(0)
-        .interact()?;
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
 
-    let selected_repo = &repos[repo_idx];
-    println!("Selected: {}", selected_repo.full_name);
+    let selected_repo = &all_repos[repo_selection];
 
-    // Step 3: Confirm
-    if !Confirm::new()
-        .with_prompt("Deploy this repository?")
+    // Confirm
+    println!();
+    println!("  {} Repository:  {}", brand("→"), bold_text(&selected_repo.full_name));
+    println!("  {} Branch:      {}", brand("→"), bold_text(branch.as_deref().unwrap_or("main")));
+    println!();
+
+    let confirmed = Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Deploy this repo?")
         .default(true)
-        .interact()?
-    {
-        println!("Deploy cancelled.");
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    if !confirmed {
+        println!();
+        println!("  {}", dim("Deploy cancelled."));
         return Ok(());
     }
 
-    // Step 4: App name and description
-    let app_name: String = Input::new()
-        .with_prompt("App name (unique)")
-        .interact_text()?;
+    // App name
+    let default_name = selected_repo.name.replace('_', "-");
+    let app_name: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("App name")
+        .default(default_name.clone())
+        .interact_text()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
 
-    let description: String = Input::new()
-        .with_prompt("Description (optional)")
-        .default(String::new())
-        .interact_text()?;
+    println!();
+    println!("  {}", dim("Starting deploy..."));
+    println!();
 
-    let desc = if description.is_empty() { None } else { Some(description.as_str()) };
-
-    // Step 5: Deploy
     let docker = eci_docker::DockerClient::new().await?;
-    let deploy_engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
-    let result = deploy_engine
-        .deploy(&selected_repo.full_name, &app_name, &project_name, desc, db, port)
+    let engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
+
+    let result = engine
+        .deploy(
+            &selected_repo.full_name,
+            &app_name,
+            &project_name,
+            selected_repo.description.as_deref(),
+            None,
+            None,
+        )
         .await?;
 
-    println!("Deployed {} successfully!", app_name);
-    if let Some(db_info) = &result.db_info {
-        println!("DB connection: {}", db_info.connection_string);
+    println!();
+    println!("  {}  Deployed {}", success("✔"), bold_text(&app_name));
+    if let Some(db) = &result.db_info {
+        println!("  {} Database: {} ({})", dim("→"), db.db_type, dim(&db.connection_string));
     }
+    println!();
     Ok(())
 }
 
-async fn cmd_apps() -> eci_core::error::Result<()> {
+fn cmd_apps() -> eci_core::error::Result<()> {
+    print_banner();
+
     let state = eci_core::state::State::new()?;
     let apps = state.list_apps()?;
 
     if apps.is_empty() {
-        println!("No apps deployed. Deploy with: eci deploy <repo>");
+        println!("  {}", dim("No apps deployed yet. Run: eci deploy"));
         return Ok(());
     }
 
-    let header = Style::new().bold();
-    println!(
-        "{}",
-        header.apply_to(format!("{:<20} {:<12} {:<20} {:<10}", "NAME", "STATUS", "IMAGE", "PROJECT"))
-    );
+    println!("  {}", header(format!("Apps ({})", apps.len())));
+    println!();
     for app in &apps {
-        let status_icon = match app.status {
-            eci_core::types::AppStatus::Running => "●",
-            eci_core::types::AppStatus::Stopped => "○",
-            eci_core::types::AppStatus::Unhealthy => "◐",
-            eci_core::types::AppStatus::Deploying => "◑",
+        let icon = match app.status {
+            eci_core::types::AppStatus::Running => success("●"),
+            eci_core::types::AppStatus::Stopped => dim("○"),
+            eci_core::types::AppStatus::Unhealthy => warning("◐"),
+            eci_core::types::AppStatus::Deploying => brand("◑"),
         };
-        println!(
-            "{:<20} {} {:<10} {:<20} {:<10}",
-            app.name, status_icon, format!("{:?}", app.status), app.image_tag, app.project_name
-        );
+
+        println!("    {} {} {}", icon, bold_text(&app.name), dim(&app.project_name));
     }
+    println!();
     Ok(())
 }
 
-async fn cmd_logs(app_name: &str, lines: usize) -> eci_core::error::Result<()> {
+async fn cmd_logs(app_name: &str) -> eci_core::error::Result<()> {
+    print_banner();
     let state = eci_core::state::State::new()?;
     let app = state
         .get_app(app_name)?
@@ -298,81 +366,111 @@ async fn cmd_logs(app_name: &str, lines: usize) -> eci_core::error::Result<()> {
     let docker = eci_docker::DockerClient::new().await?;
     let logs = docker.logs(&container_id).await?;
 
-    for line in logs.iter().take(lines) {
-        print!("{}", line);
+    for line in logs.iter().rev().take(50).rev() {
+        println!("  {}", dim(line));
     }
-    Ok(())
-}
-
-async fn cmd_rollback(app_name: &str) -> eci_core::error::Result<()> {
-    let config = eci_core::config::Config::load()?;
-    let state = eci_core::state::State::new()?;
-    let docker = eci_docker::DockerClient::new().await?;
-    let github = eci_github::GitHubClient::new(&config).await?;
-
-    let deploy_engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
-    deploy_engine.rollback(app_name).await?;
     Ok(())
 }
 
 async fn cmd_stop(app_name: &str) -> eci_core::error::Result<()> {
+    print_banner();
     let state = eci_core::state::State::new()?;
     let app = state
         .get_app(app_name)?
         .ok_or_else(|| eci_core::error::EciError::Deploy(format!("App '{}' not found", app_name)))?;
 
-    if let Some(container_id) = &app.container_id {
+    if let Some(cid) = &app.container_id {
         let docker = eci_docker::DockerClient::new().await?;
-        docker.stop_container(container_id).await?;
-        state.update_app_status(app_name, &eci_core::types::AppStatus::Stopped)?;
-        println!("App '{}' stopped.", app_name);
+        docker.stop_container(cid).await?;
+        println!("  {}  Stopped {}", success("✔"), bold_text(app_name));
     }
-    Ok(())
-}
-
-async fn cmd_start(app_name: &str) -> eci_core::error::Result<()> {
-    let state = eci_core::state::State::new()?;
-    let app = state
-        .get_app(app_name)?
-        .ok_or_else(|| eci_core::error::EciError::Deploy(format!("App '{}' not found", app_name)))?;
-
-    let docker = eci_docker::DockerClient::new().await?;
-    let _container_id = docker
-        .run_container(app_name, &app.image_tag, app.port)
-        .await?;
-    state.update_app_status(app_name, &eci_core::types::AppStatus::Running)?;
-    println!("App '{}' started.", app_name);
     Ok(())
 }
 
 async fn cmd_remove(app_name: &str) -> eci_core::error::Result<()> {
+    print_banner();
+    let confirmed = Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(format!("Remove app '{}'?", app_name))
+        .default(false)
+        .interact()
+        .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+    if !confirmed {
+        println!("  {}", dim("Cancelled"));
+        return Ok(());
+    }
+
     let state = eci_core::state::State::new()?;
     let app = state
         .get_app(app_name)?
         .ok_or_else(|| eci_core::error::EciError::Deploy(format!("App '{}' not found", app_name)))?;
 
-    if let Some(container_id) = &app.container_id {
+    if let Some(cid) = &app.container_id {
         let docker = eci_docker::DockerClient::new().await?;
-        docker.remove_container(container_id).await?;
+        docker.remove_container(cid).await?;
     }
-    println!("App '{}' removed.", app_name);
+    state.delete_app(app_name)?;
+    println!("  {}  Removed {}", success("✔"), bold_text(app_name));
     Ok(())
 }
 
-async fn cmd_status() -> eci_core::error::Result<()> {
+fn cmd_status(app_name: &str) -> eci_core::error::Result<()> {
+    print_banner();
     let state = eci_core::state::State::new()?;
-    let projects = state.list_projects()?;
-    let apps = state.list_apps()?;
+    let app = state
+        .get_app(app_name)?
+        .ok_or_else(|| eci_core::error::EciError::Deploy(format!("App '{}' not found", app_name)))?;
 
-    let header = Style::new().bold();
-    println!("{}", header.apply_to("easy-ci Status"));
-    println!("Projects: {}", projects.len());
-    println!(
-        "Apps: {} (running: {})",
-        apps.len(),
-        apps.iter()
-            .filter(|a| a.status == eci_core::types::AppStatus::Running)
-            .count()
-    );
+    println!("  {}", header(format!("Status: {}", app.name)));
+    println!();
+
+    let status_colored = match app.status {
+        eci_core::types::AppStatus::Running => success("running"),
+        eci_core::types::AppStatus::Stopped => dim("stopped"),
+        eci_core::types::AppStatus::Unhealthy => warning("unhealthy"),
+        eci_core::types::AppStatus::Deploying => brand("deploying"),
+    };
+
+    println!("    {} {}", bold_text("Status:"), status_colored);
+    println!("    {} {}", bold_text("Image:"), dim(&app.image_tag));
+    println!("    {} {}", bold_text("Project:"), dim(&app.project_name));
+    if let Some(cid) = &app.container_id {
+        let short = if cid.len() > 12 { &cid[..12] } else { cid };
+        println!("    {} {}", bold_text("Container:"), dim(short));
+    }
+    println!();
     Ok(())
+}
+
+fn cmd_dashboard() -> eci_core::error::Result<()> {
+    let state = eci_core::state::State::new()?;
+    eci_tui::run_dashboard(&state)
+}
+
+async fn cmd_webhook(port: u16, secret: Option<String>) -> eci_core::error::Result<()> {
+    print_banner();
+    println!("  {}", header("Starting webhook server"));
+    println!();
+
+    let config = eci_core::config::Config::load()?;
+    let state = eci_core::state::State::new()?;
+    let docker = eci_docker::DockerClient::new().await?;
+
+    let webhook_secret = secret.unwrap_or_else(|| {
+        println!("  {}", warning("No webhook secret provided. Using default."));
+        println!("  {}", dim("Set --secret or ECI_WEBHOOK_SECRET env var for production."));
+        "eci-webhook-secret".to_string()
+    });
+
+    println!("  {} Listening on port {}", brand("→"), bold_text(port.to_string()));
+    println!("  {} Webhook URL: http://localhost:{}/webhook", brand("→"), port);
+    println!();
+    println!("  {} Register this URL in your GitHub repo Settings → Webhooks", dim("→"));
+    println!("  {} Content type: application/json", dim("→"));
+    println!("  {} Events: Just the push event", dim("→"));
+    println!();
+    println!("  {} Press Ctrl+C to stop", dim("→"));
+    println!();
+
+    eci_webhook::start_webhook_server(port, config, state, docker, webhook_secret).await
 }
