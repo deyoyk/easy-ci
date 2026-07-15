@@ -77,6 +77,32 @@ impl<'a> DbProvisioner<'a> {
         Ok((username, password))
     }
 
+    pub fn get_connection_string(
+        app_name: &str,
+        db_type: &DbType,
+        username: &str,
+        password: &str,
+    ) -> Result<String> {
+        Ok(match db_type {
+            DbType::Postgres => format!(
+                "postgresql://{}:{}@localhost:{}/{}",
+                username, password, db_type.default_port(), app_name
+            ),
+            DbType::Mongo => format!(
+                "mongodb://{}:{}@localhost:{}/{}",
+                username, password, db_type.default_port(), app_name
+            ),
+            DbType::Redis => format!(
+                "redis://:{}@localhost:{}",
+                password, db_type.default_port()
+            ),
+            DbType::MySQL => format!(
+                "mysql://{}:{}@localhost:{}/{}",
+                username, password, db_type.default_port(), app_name
+            ),
+        })
+    }
+
     pub async fn provision(
         &self,
         app_name: &str,
@@ -113,24 +139,7 @@ impl<'a> DbProvisioner<'a> {
             .run_container(&container_name, image, Some(db_type.default_port()))
             .await?;
 
-        let connection_string = match db_type {
-            DbType::Postgres => format!(
-                "postgresql://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
-            ),
-            DbType::Mongo => format!(
-                "mongodb://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
-            ),
-            DbType::Redis => format!(
-                "redis://:{}@localhost:{}",
-                password, db_type.default_port()
-            ),
-            DbType::MySQL => format!(
-                "mysql://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
-            ),
-        };
+        let connection_string = Self::get_connection_string(app_name, db_type, &username, &password)?;
 
         Ok(DbInfo {
             app_name: app_name.to_string(),
