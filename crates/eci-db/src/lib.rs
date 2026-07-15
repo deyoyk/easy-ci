@@ -37,7 +37,6 @@ impl DbType {
             DbType::MySQL => 3306,
         }
     }
-
 }
 
 impl std::str::FromStr for DbType {
@@ -91,28 +90,30 @@ impl<'a> DbProvisioner<'a> {
         Ok(match db_type {
             DbType::Postgres => format!(
                 "postgresql://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
+                username,
+                password,
+                db_type.default_port(),
+                app_name
             ),
             DbType::Mongo => format!(
                 "mongodb://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
+                username,
+                password,
+                db_type.default_port(),
+                app_name
             ),
-            DbType::Redis => format!(
-                "redis://:{}@localhost:{}",
-                password, db_type.default_port()
-            ),
+            DbType::Redis => format!("redis://:{}@localhost:{}", password, db_type.default_port()),
             DbType::MySQL => format!(
                 "mysql://{}:{}@localhost:{}/{}",
-                username, password, db_type.default_port(), app_name
+                username,
+                password,
+                db_type.default_port(),
+                app_name
             ),
         })
     }
 
-    pub async fn provision(
-        &self,
-        app_name: &str,
-        db_type: &DbType,
-    ) -> Result<DbInfo> {
+    pub async fn provision(&self, app_name: &str, db_type: &DbType) -> Result<DbInfo> {
         let (username, password) = Self::generate_credentials(db_type, app_name)?;
 
         let secrets_dir = Config::config_dir()?.join("secrets");
@@ -144,7 +145,8 @@ impl<'a> DbProvisioner<'a> {
             .run_container(&container_name, image, Some(db_type.default_port()))
             .await?;
 
-        let connection_string = Self::get_connection_string(app_name, db_type, &username, &password)?;
+        let connection_string =
+            Self::get_connection_string(app_name, db_type, &username, &password)?;
 
         Ok(DbInfo {
             app_name: app_name.to_string(),

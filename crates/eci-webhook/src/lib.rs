@@ -1,6 +1,6 @@
 use eci_core::config::Config;
-use eci_core::state::State;
 use eci_core::error::Result;
+use eci_core::state::State;
 use eci_docker::DockerClient;
 use eci_github::GitHubClient;
 use hmac::{Hmac, Mac};
@@ -55,10 +55,7 @@ pub async fn start_webhook_server(
             async move { handle_request(req, &state).await }
         });
 
-        if let Err(err) = http1::Builder::new()
-            .serve_connection(io, service)
-            .await
-        {
+        if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
             eprintln!("Error serving connection: {}", err);
         }
     }
@@ -174,7 +171,10 @@ async fn handle_push(state: &Arc<WebhookState>, body: &str) -> Response<Full<Byt
             eprintln!("Failed to create GitHub client: {}", e);
             return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from(format!("GitHub client error: {}", e))))
+                .body(Full::new(Bytes::from(format!(
+                    "GitHub client error: {}",
+                    e
+                ))))
                 .unwrap();
         }
     };
@@ -182,7 +182,10 @@ async fn handle_push(state: &Arc<WebhookState>, body: &str) -> Response<Full<Byt
     let engine = eci_deploy::DeployEngine::new(&docker, &github, &state_lock, &state.config);
 
     let app_name = full_name.split('/').next_back().unwrap_or("app");
-    match engine.deploy(full_name, app_name, "default", None, None, None).await {
+    match engine
+        .deploy(full_name, app_name, "default", None, None, None)
+        .await
+    {
         Ok(_) => Response::new(Full::new(Bytes::from(format!("Deployed {}", full_name)))),
         Err(e) => {
             eprintln!("Deploy failed: {}", e);
@@ -197,8 +200,8 @@ async fn handle_push(state: &Arc<WebhookState>, body: &str) -> Response<Full<Byt
 fn verify_signature(secret: &str, payload: &str, signature: &str) -> bool {
     let signature = signature.strip_prefix("sha256=").unwrap_or(signature);
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(payload.as_bytes());
     let result = mac.finalize();
     let expected = hex::encode(result.into_bytes());

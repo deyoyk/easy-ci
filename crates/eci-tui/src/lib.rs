@@ -47,20 +47,16 @@ pub fn run_dashboard(state: &State) -> eci_core::error::Result<()> {
                         app.next_tab();
                     }
                     // Up/Down or j/k: navigate within current tab
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        match app.active_tab {
-                            crate::app::ActiveTab::Projects => app.previous_project(),
-                            crate::app::ActiveTab::Apps => app.previous_app(),
-                            _ => {}
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        match app.active_tab {
-                            crate::app::ActiveTab::Projects => app.next_project(),
-                            crate::app::ActiveTab::Apps => app.next_app(),
-                            _ => {}
-                        }
-                    }
+                    KeyCode::Up | KeyCode::Char('k') => match app.active_tab {
+                        crate::app::ActiveTab::Projects => app.previous_project(),
+                        crate::app::ActiveTab::Apps => app.previous_app(),
+                        _ => {}
+                    },
+                    KeyCode::Down | KeyCode::Char('j') => match app.active_tab {
+                        crate::app::ActiveTab::Projects => app.next_project(),
+                        crate::app::ActiveTab::Apps => app.next_app(),
+                        _ => {}
+                    },
                     // Enter: select/expand item
                     KeyCode::Enter => {
                         // Future: open logs for selected app, etc.

@@ -1,4 +1,6 @@
-use bollard::container::{ListContainersOptions, LogsOptions, RemoveContainerOptions, StopContainerOptions};
+use bollard::container::{
+    ListContainersOptions, LogsOptions, RemoveContainerOptions, StopContainerOptions,
+};
 use bollard::image::BuildImageOptions;
 use bollard::Docker;
 use eci_core::error::{EciError, Result};
@@ -29,11 +31,7 @@ impl DockerClient {
         Ok(Self { docker })
     }
 
-    pub async fn build_image(
-        &self,
-        app_name: &str,
-        dockerfile_path: &Path,
-    ) -> Result<String> {
+    pub async fn build_image(&self, app_name: &str, dockerfile_path: &Path) -> Result<String> {
         let context_path = dockerfile_path
             .parent()
             .ok_or_else(|| EciError::Docker("Invalid Dockerfile path".into()))?;
@@ -199,8 +197,7 @@ impl DockerClient {
                         .map(|ps| {
                             ps.iter()
                                 .filter_map(|p| {
-                                    p.public_port
-                                        .map(|pp| format!("{}:{}", pp, p.private_port))
+                                    p.public_port.map(|pp| format!("{}:{}", pp, p.private_port))
                                 })
                                 .collect()
                         })

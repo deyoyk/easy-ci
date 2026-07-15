@@ -148,7 +148,10 @@ impl GitHubClient {
         for repo in &all_repos {
             if let Some(owner) = repo.full_name.split('/').next() {
                 // Only fetch org repos if we don't already have them
-                if !all_repos.iter().any(|r| r.full_name.starts_with(&format!("{}/", owner))) {
+                if !all_repos
+                    .iter()
+                    .any(|r| r.full_name.starts_with(&format!("{}/", owner)))
+                {
                     orgs.insert(owner.to_string());
                 }
             }
@@ -172,8 +175,7 @@ impl GitHubClient {
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
-        let url_with_token = clone_url
-            .replacen("https://", &format!("https://x:{}@", token), 1);
+        let url_with_token = clone_url.replacen("https://", &format!("https://x:{}@", token), 1);
 
         let _ = std::fs::remove_dir_all(dest);
         git2::Repository::clone(&url_with_token, dest)

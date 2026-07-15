@@ -59,7 +59,8 @@ impl<'a> DeployEngine<'a> {
 
         println!("Building image...");
         let image_tag = format!("{}:latest", app_name);
-        let build_result = self.docker
+        let build_result = self
+            .docker
             .build_image(app_name, &app_dir.join("Dockerfile"))
             .await;
 
@@ -68,9 +69,9 @@ impl<'a> DeployEngine<'a> {
             return Err(e);
         }
 
-        let app =
-            self.state
-                .create_app(app_name, project_name, repo, description, &image_tag)?;
+        let app = self
+            .state
+            .create_app(app_name, project_name, repo, description, &image_tag)?;
 
         println!("Starting container...");
         let container_result = self.docker.run_container(app_name, &image_tag, port).await;
@@ -82,7 +83,8 @@ impl<'a> DeployEngine<'a> {
         }
 
         let container_id = container_result.unwrap();
-        self.state.update_app_status(app_name, &AppStatus::Running)?;
+        self.state
+            .update_app_status(app_name, &AppStatus::Running)?;
 
         let mut db_info = None;
         if let Some(db_type_str) = db_type {
@@ -95,7 +97,8 @@ impl<'a> DeployEngine<'a> {
         println!("Health checking...");
         let healthy = self.health_check(port.unwrap_or(80)).await;
         if !healthy {
-            self.state.update_app_status(app_name, &AppStatus::Unhealthy)?;
+            self.state
+                .update_app_status(app_name, &AppStatus::Unhealthy)?;
         }
 
         let _ = std::fs::remove_dir_all(&app_dir);
@@ -132,7 +135,8 @@ impl<'a> DeployEngine<'a> {
             .run_container(app_name, &old_image, app.port)
             .await?;
 
-        self.state.update_app_status(app_name, &AppStatus::Running)?;
+        self.state
+            .update_app_status(app_name, &AppStatus::Running)?;
         println!("Rollback complete!");
         Ok(())
     }
@@ -202,9 +206,12 @@ impl Poller {
                 match gh.get_branch_sha(owner, repo_name, &branch).await {
                     Ok(current_sha) => {
                         if !last_sha.is_empty() && current_sha != last_sha {
-                            println!("New commit detected ({}), deploying {}...", &current_sha[..8], app_name);
-                            let deploy_engine =
-                                DeployEngine::new(&docker, gh, &state, &config);
+                            println!(
+                                "New commit detected ({}), deploying {}...",
+                                &current_sha[..8],
+                                app_name
+                            );
+                            let deploy_engine = DeployEngine::new(&docker, gh, &state, &config);
                             if let Err(e) = deploy_engine
                                 .deploy(&repo, &app_name, &app_name, None, None, None)
                                 .await
@@ -215,7 +222,10 @@ impl Poller {
                         last_sha = current_sha;
                     }
                     Err(e) => {
-                        eprintln!("Failed to get branch SHA for {}/{}: {}", owner, repo_name, e);
+                        eprintln!(
+                            "Failed to get branch SHA for {}/{}: {}",
+                            owner, repo_name, e
+                        );
                     }
                 }
             }
