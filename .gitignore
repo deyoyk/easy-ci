@@ -2,3 +2,4 @@
 *.pdb
 /.superpowers
 /docs
+/npm/bin
