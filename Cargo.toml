@@ -4,3 +4,6 @@ members = [
     "crates/eci-core",
     "crates/eci-cli",
 ]
+
+[workspace.package]
+rust-version = "1.70"
