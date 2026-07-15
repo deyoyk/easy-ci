@@ -43,10 +43,12 @@ impl DockerClient {
         tar.append_dir_all(".", context_path)?;
         tar.finish()?;
 
-        let mut build_opts = BuildImageOptions::default();
-        build_opts.dockerfile = "Dockerfile";
-        build_opts.t = app_name;
-        build_opts.rm = true;
+        let build_opts = BuildImageOptions {
+            dockerfile: "Dockerfile",
+            t: app_name,
+            rm: true,
+            ..Default::default()
+        };
 
         let tar_bytes = std::fs::read(&tar_path)?;
         let mut stream = self

@@ -38,7 +38,12 @@ impl DbType {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self> {
+}
+
+impl std::str::FromStr for DbType {
+    type Err = EciError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "postgres" | "postgresql" => Ok(DbType::Postgres),
             "mongo" | "mongodb" => Ok(DbType::Mongo),

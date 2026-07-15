@@ -6,12 +6,14 @@ use eci_db::DbProvisioner;
 use eci_docker::DockerClient;
 use eci_github::GitHubClient;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 pub struct DeployEngine<'a> {
     docker: &'a DockerClient,
+    #[allow(dead_code)]
     github: &'a GitHubClient,
     state: &'a State,
     config: &'a Config,
@@ -139,6 +141,12 @@ impl<'a> DeployEngine<'a> {
 
 pub struct Poller {
     running: Arc<AtomicBool>,
+}
+
+impl Default for Poller {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Poller {

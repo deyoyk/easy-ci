@@ -207,7 +207,7 @@ async fn cmd_deploy(
 
     let deploy_engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
     let result = deploy_engine
-        .deploy(repo, &app_name, &project_names[project_idx], desc, db, port)
+        .deploy(repo, &app_name, project_names[project_idx], desc, db, port)
         .await?;
 
     println!("Deployed {} successfully!", app_name);
