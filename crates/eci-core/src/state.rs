@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::types::{App, AppStatus, Project};
+use crate::types::{App, AppStatus, Deployment, Project};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use std::fs;
@@ -210,5 +210,128 @@ impl State {
             .conn
             .execute("DELETE FROM apps WHERE name = ?1", params![name])?;
         Ok(rows > 0)
+    }
+
+    pub fn create_deployment(
+        &self,
+        app_name: &str,
+        version: &str,
+        image_tag: &str,
+    ) -> Result<Deployment> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO deployments (app_name, version, image_tag, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![app_name, version, image_tag, "deployed", now],
+        )?;
+        Ok(Deployment {
+            id: self.conn.last_insert_rowid(),
+            app_name: app_name.to_string(),
+            version: version.to_string(),
+            image_tag: image_tag.to_string(),
+            status: "deployed".to_string(),
+            created_at: Utc::now(),
+        })
+    }
+
+    pub fn list_deployments(&self, app_name: &str) -> Result<Vec<Deployment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, app_name, version, image_tag, status, created_at FROM deployments WHERE app_name = ?1 ORDER BY created_at DESC LIMIT 10",
+        )?;
+        let deployments = stmt
+            .query_map(params![app_name], |row| {
+                let created_at_str: String = row.get(5)?;
+                Ok(Deployment {
+                    id: row.get(0)?,
+                    app_name: row.get(1)?,
+                    version: row.get(2)?,
+                    image_tag: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: Self::parse_dt(&created_at_str),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(deployments)
+    }
+
+    pub fn get_latest_deployment(&self, app_name: &str) -> Result<Option<Deployment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, app_name, version, image_tag, status, created_at FROM deployments WHERE app_name = ?1 ORDER BY created_at DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![app_name], |row| {
+            let created_at_str: String = row.get(5)?;
+            Ok(Deployment {
+                id: row.get(0)?,
+                app_name: row.get(1)?,
+                version: row.get(2)?,
+                image_tag: row.get(3)?,
+                status: row.get(4)?,
+                created_at: Self::parse_dt(&created_at_str),
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_name(prefix: &str) -> String {
+        format!("{}-{}", prefix, chrono::Utc::now().timestamp_millis())
+    }
+
+    #[test]
+    fn project_crud() {
+        let state = State::new().unwrap();
+        let name = unique_name("test-proj");
+        state.create_project(&name, Some("test desc")).unwrap();
+        let projects = state.list_projects().unwrap();
+        assert!(projects.iter().any(|p| p.name == name));
+        state.delete_project(&name).unwrap();
+        let projects = state.list_projects().unwrap();
+        assert!(!projects.iter().any(|p| p.name == name));
+    }
+
+    #[test]
+    fn app_crud() {
+        let state = State::new().unwrap();
+        let proj = unique_name("test-proj");
+        let app = unique_name("test-app");
+        state.create_project(&proj, None).unwrap();
+        state
+            .create_app(&app, &proj, "owner/repo", None, "test:latest")
+            .unwrap();
+        let result = state.get_app(&app).unwrap();
+        assert!(result.is_some());
+        state
+            .update_app_status(&app, &AppStatus::Running)
+            .unwrap();
+        let result = state.get_app(&app).unwrap().unwrap();
+        assert_eq!(result.status, AppStatus::Running);
+        state.delete_app(&app).unwrap();
+        assert!(state.get_app(&app).unwrap().is_none());
+    }
+
+    #[test]
+    fn deployment_crud() {
+        let state = State::new().unwrap();
+        let proj = unique_name("test-proj");
+        let app = unique_name("test-app");
+        state.create_project(&proj, None).unwrap();
+        state
+            .create_app(&app, &proj, "owner/repo", None, "test:latest")
+            .unwrap();
+        state
+            .create_deployment(&app, "v1", "test:v1")
+            .unwrap();
+        let deps = state.list_deployments(&app).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].version, "v1");
+        let latest = state.get_latest_deployment(&app).unwrap();
+        assert!(latest.is_some());
+        assert_eq!(latest.unwrap().version, "v1");
     }
 }

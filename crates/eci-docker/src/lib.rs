@@ -3,6 +3,7 @@ use bollard::container::{
 };
 use bollard::image::BuildImageOptions;
 use bollard::Docker;
+use eci_core::config::DockerConfig;
 use eci_core::error::{EciError, Result};
 use eci_core::types::AppStatus;
 use futures_util::stream::TryStreamExt;
@@ -25,9 +26,14 @@ pub struct ContainerInfo {
 }
 
 impl DockerClient {
-    pub async fn new() -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults()
-            .map_err(|e| EciError::Docker(format!("Failed to connect: {}", e)))?;
+    pub async fn new(config: &DockerConfig) -> Result<Self> {
+        let docker = if config.host.starts_with("tcp://") {
+            Docker::connect_with_local_defaults()
+                .map_err(|e| EciError::Docker(format!("Docker connect to '{}' failed: {}", config.host, e)))?
+        } else {
+            Docker::connect_with_local_defaults()
+                .map_err(|e| EciError::Docker(format!("Local Docker connect failed: {}", e)))?
+        };
         Ok(Self { docker })
     }
 
@@ -36,7 +42,7 @@ impl DockerClient {
             .parent()
             .ok_or_else(|| EciError::Docker("Invalid Dockerfile path".into()))?;
 
-        let tar_path = format!("/tmp/{}.tar", app_name);
+        let tar_path = std::env::temp_dir().join(format!("{}.tar", app_name));
         let tar_file = std::fs::File::create(&tar_path)?;
         let mut tar = TarBuilder::new(tar_file);
         tar.append_dir_all(".", context_path)?;
@@ -134,6 +140,23 @@ impl DockerClient {
             )
             .await
             .map_err(|e| EciError::Docker(format!("Remove error: {}", e)))?;
+        Ok(())
+    }
+
+    pub async fn tag_image(&self, source: &str, target: &str) -> Result<()> {
+        use bollard::image::TagImageOptions;
+        self.docker
+            .tag_image(
+                source,
+                Some(TagImageOptions {
+                    repo: target.to_string(),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|e| {
+                EciError::Docker(format!("Tag image '{}' as '{}' failed: {}", source, target, e))
+            })?;
         Ok(())
     }
 

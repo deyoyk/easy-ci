@@ -7,7 +7,6 @@ members = [
     "crates/eci-db",
     "crates/eci-deploy",
     "crates/eci-tui",
-    "crates/eci-webhook",
     "crates/eci-cli",
 ]
 

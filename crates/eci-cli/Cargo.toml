@@ -20,7 +20,6 @@ eci-github = { path = "../eci-github" }
 eci-docker = { path = "../eci-docker" }
 eci-db = { path = "../eci-db" }
 eci-deploy = { path = "../eci-deploy" }
-eci-webhook = { path = "../eci-webhook" }
 eci-tui = { path = "../eci-tui" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

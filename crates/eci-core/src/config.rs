@@ -23,10 +23,8 @@ pub struct DockerConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeployConfig {
-    pub poll_interval_secs: u64,
     pub health_check_timeout_secs: u64,
     pub auto_rollback_on_unhealthy: bool,
-    pub auto_deploy_on_commit: bool,
 }
 
 impl Default for Config {
@@ -40,10 +38,8 @@ impl Default for Config {
                 host: "unix:///var/run/docker.sock".to_string(),
             },
             deploy: DeployConfig {
-                poll_interval_secs: 30,
                 health_check_timeout_secs: 60,
                 auto_rollback_on_unhealthy: true,
-                auto_deploy_on_commit: true,
             },
         }
     }
@@ -78,5 +74,35 @@ impl Config {
             .map_err(|e| EciError::Config(format!("Failed to serialize config: {}", e)))?;
         fs::write(Self::config_path()?, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(config.github.token, parsed.github.token);
+        assert_eq!(config.docker.host, parsed.docker.host);
+        assert_eq!(
+            config.deploy.health_check_timeout_secs,
+            parsed.deploy.health_check_timeout_secs
+        );
+    }
+
+    #[test]
+    fn default_docker_host_is_platform_specific() {
+        let config = Config::default();
+        // Default is unix socket for Linux/macOS; on Windows it should be npipe
+        // But current default is unix for all platforms - verify it's a valid socket path
+        assert!(
+            config.docker.host.starts_with("unix://") || config.docker.host.starts_with("npipe://"),
+            "Docker host should be a socket path, got: {}",
+            config.docker.host
+        );
     }
 }

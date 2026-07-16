@@ -5,11 +5,10 @@ use eci_core::types::{App, AppStatus, DbInfo};
 use eci_db::DbProvisioner;
 use eci_docker::DockerClient;
 use eci_github::GitHubClient;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub struct DeployEngine<'a> {
     docker: &'a DockerClient,
@@ -48,14 +47,28 @@ impl<'a> DeployEngine<'a> {
         db_type: Option<&str>,
         port: Option<u16>,
     ) -> Result<DeployResult> {
-        let app_dir = PathBuf::from(format!("/tmp/eci-{}", app_name));
+        // Local deploy path
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let app_dir = std::env::temp_dir().join(format!("eci-{}-{}", app_name, timestamp));
 
         println!("Cloning {}...", repo);
         GitHubClient::clone_repo(
             &format!("https://github.com/{}", repo),
             &app_dir,
             &self.config.github.token,
-        )?;
+        )
+        .map_err(|e| EciError::Deploy(format!("Failed to clone repo '{}': {}", repo, e)))?;
+
+        // Tag current image as previous before replacing (for rollback)
+        if let Ok(Some(current)) = self.state.get_app(app_name) {
+            let _ = self
+                .docker
+                .tag_image(&current.image_tag, &format!("{}:previous", app_name))
+                .await;
+        }
 
         println!("Building image...");
         let image_tag = format!("{}:latest", app_name);
@@ -66,8 +79,15 @@ impl<'a> DeployEngine<'a> {
 
         if let Err(e) = build_result {
             let _ = std::fs::remove_dir_all(&app_dir);
-            return Err(e);
+            return Err(EciError::Deploy(format!(
+                "Failed to build image for '{}': {}",
+                app_name, e
+            )));
         }
+
+        // Record deployment
+        let version = format!("v{}", chrono::Utc::now().timestamp());
+        let _ = self.state.create_deployment(app_name, &version, &image_tag);
 
         let app = self
             .state
@@ -79,7 +99,10 @@ impl<'a> DeployEngine<'a> {
         if let Err(e) = container_result {
             let _ = self.state.delete_app(app_name);
             let _ = std::fs::remove_dir_all(&app_dir);
-            return Err(e);
+            return Err(EciError::Deploy(format!(
+                "Failed to start container for '{}': {}",
+                app_name, e
+            )));
         }
 
         let container_id = container_result.unwrap();
@@ -188,7 +211,7 @@ impl Poller {
         let app_name = app_name.to_string();
         let repo = repo.to_string();
         let branch = branch.to_string();
-        let poll_interval = Duration::from_secs(config.deploy.poll_interval_secs);
+        let poll_interval = Duration::from_secs(60);
 
         let github = match GitHubClient::new(&config).await {
             Ok(client) => Some(client),
