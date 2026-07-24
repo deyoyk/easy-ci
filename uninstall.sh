@@ -147,6 +147,3 @@ remove_logs
 echo ""
 echo -e "${GREEN}${BOLD}easy-ci uninstalled successfully!${NC}"
 echo ""
-echo -e "If you installed via npm, also run:"
-echo -e "  ${BOLD}npm uninstall -g easy-ci${NC}"
-echo ""

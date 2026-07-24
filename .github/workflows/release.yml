@@ -186,11 +186,6 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash
             ```
 
-            ### Install via npm
-            ```bash
-            npm install -g easy-ci
-            ```
-
             ### Manual download
             Download the appropriate binary for your platform from the assets below.
 
@@ -202,53 +197,6 @@ jobs:
             | macOS | ARM64 (Apple Silicon) | `eci-darwin-aarch64.tar.gz` |
             | Windows | x86_64 | `eci-windows-x86_64.zip` |
           files: artifacts/*
-
-  publish-npm:
-    name: Publish to npm
-    needs: [version, build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: npm/bin
-          merge-multiple: true
-
-      - name: Organize binaries
-        run: |
-          mkdir -p npm/bin/darwin/x86_64
-          mkdir -p npm/bin/darwin/aarch64
-          mkdir -p npm/bin/linux/x86_64
-          mkdir -p npm/bin/linux/aarch64
-          mkdir -p npm/bin/windows/x86_64
-
-          mv npm/bin/eci-darwin-x86_64 npm/bin/darwin/x86_64/eci 2>/dev/null || true
-          mv npm/bin/eci-darwin-aarch64 npm/bin/darwin/aarch64/eci 2>/dev/null || true
-          mv npm/bin/eci-linux-x86_64 npm/bin/linux/x86_64/eci 2>/dev/null || true
-          mv npm/bin/eci-linux-aarch64 npm/bin/linux/aarch64/eci 2>/dev/null || true
-          mv npm/bin/eci-windows-x86_64.exe npm/bin/windows/x86_64/eci.exe 2>/dev/null || true
-
-          chmod +x npm/bin/darwin/*/eci npm/bin/linux/*/eci 2>/dev/null || true
-
-      - name: Update package version
-        run: |
-          cd npm
-          npm version ${{ needs.version.outputs.version }} --no-git-tag-version
-
-      - name: Publish to npm
-        run: |
-          cd npm
-          npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
     name: Build Docker image

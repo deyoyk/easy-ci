@@ -28,12 +28,6 @@ curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | ba
 curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --no-service
 ```
 
-### Install via npm
-
-```bash
-npm install -g easy-ci
-```
-
 ### Manual install
 
 Download the latest binary for your platform from [GitHub Releases](https://github.com/deyoyk/easy-ci/releases).
