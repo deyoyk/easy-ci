@@ -2,6 +2,7 @@ use crate::error::{EciError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use tracing::{debug, info};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -59,8 +60,10 @@ impl Config {
     pub fn load() -> Result<Self> {
         let path = Self::config_path()?;
         if !path.exists() {
+            debug!("No config file found, using defaults");
             return Ok(Self::default());
         }
+        info!("Loading config from {}", path.display());
         let content = fs::read_to_string(&path)
             .map_err(|e| EciError::Config(format!("Failed to read config: {}", e)))?;
         toml::from_str(&content)
@@ -72,7 +75,9 @@ impl Config {
         fs::create_dir_all(&dir)?;
         let content = toml::to_string_pretty(self)
             .map_err(|e| EciError::Config(format!("Failed to serialize config: {}", e)))?;
-        fs::write(Self::config_path()?, content)?;
+        let path = Self::config_path()?;
+        info!("Saving config to {}", path.display());
+        fs::write(&path, content)?;
         Ok(())
     }
 }
@@ -104,5 +109,101 @@ mod tests {
             "Docker host should be a socket path, got: {}",
             config.docker.host
         );
+    }
+
+    #[test]
+    fn default_config_values() {
+        let config = Config::default();
+        assert!(config.github.token.is_empty());
+        assert!(config.github.default_org.is_none());
+        assert_eq!(config.docker.host, "unix:///var/run/docker.sock");
+        assert_eq!(config.deploy.health_check_timeout_secs, 60);
+        assert!(config.deploy.auto_rollback_on_unhealthy);
+    }
+
+    #[test]
+    fn config_serialization_custom_values() {
+        let config = Config {
+            github: GitHubConfig {
+                token: "ghp_test123".to_string(),
+                default_org: Some("myorg".to_string()),
+            },
+            docker: DockerConfig {
+                host: "tcp://localhost:2375".to_string(),
+            },
+            deploy: DeployConfig {
+                health_check_timeout_secs: 30,
+                auto_rollback_on_unhealthy: false,
+            },
+        };
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("ghp_test123"));
+        assert!(toml_str.contains("tcp://localhost:2375"));
+        assert!(toml_str.contains("myorg"));
+
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.github.token, "ghp_test123");
+        assert_eq!(parsed.github.default_org, Some("myorg".to_string()));
+        assert_eq!(parsed.docker.host, "tcp://localhost:2375");
+        assert_eq!(parsed.deploy.health_check_timeout_secs, 30);
+        assert!(!parsed.deploy.auto_rollback_on_unhealthy);
+    }
+
+    #[test]
+    fn config_clone() {
+        let config = Config::default();
+        let cloned = config.clone();
+        assert_eq!(config.github.token, cloned.github.token);
+        assert_eq!(config.docker.host, cloned.docker.host);
+    }
+
+    #[test]
+    fn config_debug_format() {
+        let config = Config::default();
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("Config"));
+        assert!(debug.contains("GitHubConfig"));
+        assert!(debug.contains("DockerConfig"));
+        assert!(debug.contains("DeployConfig"));
+    }
+
+    #[test]
+    fn github_config_fields() {
+        let gh = GitHubConfig {
+            token: "token".to_string(),
+            default_org: Some("org".to_string()),
+        };
+        assert_eq!(gh.token, "token");
+        assert_eq!(gh.default_org, Some("org".to_string()));
+    }
+
+    #[test]
+    fn docker_config_fields() {
+        let docker = DockerConfig {
+            host: "unix:///var/run/docker.sock".to_string(),
+        };
+        assert_eq!(docker.host, "unix:///var/run/docker.sock");
+    }
+
+    #[test]
+    fn deploy_config_fields() {
+        let deploy = DeployConfig {
+            health_check_timeout_secs: 120,
+            auto_rollback_on_unhealthy: false,
+        };
+        assert_eq!(deploy.health_check_timeout_secs, 120);
+        assert!(!deploy.auto_rollback_on_unhealthy);
+    }
+
+    #[test]
+    fn config_toml_parse_invalid() {
+        let result = toml::from_str::<Config>("this is not valid toml [[[");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_toml_parse_missing_fields() {
+        let result = toml::from_str::<Config>("[github]\ntoken = \"test\"");
+        assert!(result.is_err());
     }
 }

@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use colored::*;
 use dialoguer::{Confirm, Input, Select};
+use tracing::{debug, info};
 
 fn brand<S: fmt::Display>(s: S) -> ColoredString {
     s.to_string().truecolor(108, 92, 231).bold()
@@ -23,14 +24,14 @@ fn header<S: fmt::Display>(s: S) -> ColoredString {
 
 use std::fmt;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "eci", about = "easy-ci — internal deployment tool", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     Init,
     Project {
@@ -66,10 +67,13 @@ enum Commands {
     History {
         name: String,
     },
+    Rollback {
+        name: String,
+    },
     Dashboard,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum ProjectAction {
     Create,
     List,
@@ -78,7 +82,16 @@ enum ProjectAction {
 
 #[tokio::main]
 async fn main() -> eci_core::error::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_target(false)
+        .init();
+
     let cli = Cli::parse();
+    debug!(command = ?cli.command, "CLI command parsed");
 
     match cli.command {
         Commands::Init => cmd_init()?,
@@ -101,6 +114,7 @@ async fn main() -> eci_core::error::Result<()> {
         Commands::Remove { name } => cmd_remove(&name).await?,
         Commands::Status { name } => cmd_status(&name)?,
         Commands::History { name } => cmd_history(&name)?,
+        Commands::Rollback { name } => cmd_rollback(&name).await?,
         Commands::Dashboard => cmd_dashboard()?,
     }
 
@@ -273,14 +287,16 @@ async fn cmd_deploy(
     let app_name = match name {
         Some(n) => n,
         None => {
-            let default_name = repo.split('/').last().unwrap_or(repo).replace('_', "-");
+            let default_name = repo
+                .split('/')
+                .next_back()
+                .unwrap_or(repo)
+                .replace('_', "-");
             Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt("App name")
                 .default(default_name)
                 .interact_text()
-                .map_err(|e| {
-                    eci_core::error::EciError::Config(format!("Input error: {}", e))
-                })?
+                .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?
         }
     };
 
@@ -299,14 +315,7 @@ async fn cmd_deploy(
     let engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
 
     let result = engine
-        .deploy(
-            repo,
-            &app_name,
-            &project_name,
-            None,
-            db.as_deref(),
-            port,
-        )
+        .deploy(repo, &app_name, &project_name, None, db.as_deref(), port)
         .await?;
 
     println!();
@@ -326,14 +335,7 @@ async fn cmd_deploy(
         println!("  {} Starting poller (60s interval)...", brand("→"));
         let poller = eci_deploy::Poller::new();
         poller
-            .start(
-                &app_name,
-                repo,
-                "main",
-                config.clone(),
-                state,
-                docker,
-            )
+            .start(&app_name, repo, "main", config.clone(), state, docker)
             .await?;
         println!("  {} Press Ctrl+C to stop", dim("→"));
         // Keep running until interrupted
@@ -475,21 +477,42 @@ fn cmd_history(app_name: &str) -> eci_core::error::Result<()> {
     let deployments = state.list_deployments(app_name)?;
 
     if deployments.is_empty() {
-        println!("  {}", dim(&format!("No deployments for '{}'.", app_name)));
+        println!("  {}", dim(format!("No deployments for '{}'.", app_name)));
         return Ok(());
     }
 
-    println!("  {}", header(format!("Deployments for {} (last 10)", app_name)));
+    println!(
+        "  {}",
+        header(format!("Deployments for {} (last 10)", app_name))
+    );
     println!();
     for d in &deployments {
         println!(
             "    {} {} {} {}",
-            dim(&format!("#{}", d.id)),
+            dim(format!("#{}", d.id)),
             success(&d.version),
             dim(&d.image_tag),
-            dim(&d.created_at.format("%Y-%m-%d %H:%M").to_string())
+            dim(d.created_at.format("%Y-%m-%d %H:%M").to_string())
         );
     }
+    println!();
+    Ok(())
+}
+
+async fn cmd_rollback(app_name: &str) -> eci_core::error::Result<()> {
+    print_banner();
+    info!(app = app_name, "Rolling back");
+
+    let config = eci_core::config::Config::load()?;
+    let state = eci_core::state::State::new()?;
+    let github = eci_github::GitHubClient::new(&config).await?;
+    let docker = eci_docker::DockerClient::new(&config.docker).await?;
+    let engine = eci_deploy::DeployEngine::new(&docker, &github, &state, &config);
+
+    engine.rollback(app_name).await?;
+
+    println!();
+    println!("  {}  Rolled back {}", success("✔"), bold_text(app_name));
     println!();
     Ok(())
 }

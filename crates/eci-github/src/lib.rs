@@ -3,6 +3,7 @@ use eci_core::error::{EciError, Result};
 use octocrab::params::repos::Reference;
 use octocrab::Octocrab;
 use std::path::PathBuf;
+use tracing::{debug, info};
 
 pub struct GitHubClient {
     octocrab: Octocrab,
@@ -19,6 +20,7 @@ pub struct RepoInfo {
 
 impl GitHubClient {
     pub async fn new(config: &Config) -> Result<Self> {
+        debug!("Creating GitHub client");
         let octocrab = Octocrab::builder()
             .personal_token(config.github.token.clone())
             .build()
@@ -27,6 +29,7 @@ impl GitHubClient {
     }
 
     pub async fn list_repos(&self, owner: &str) -> Result<Vec<RepoInfo>> {
+        debug!(owner = owner, "Listing repos");
         let repos = self
             .octocrab
             .users(owner)
@@ -49,6 +52,12 @@ impl GitHubClient {
     }
 
     pub async fn get_branch_sha(&self, owner: &str, repo: &str, branch: &str) -> Result<String> {
+        debug!(
+            owner = owner,
+            repo = repo,
+            branch = branch,
+            "Getting branch SHA"
+        );
         let reference = self
             .octocrab
             .repos(owner, repo)
@@ -175,11 +184,60 @@ impl GitHubClient {
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
+        debug!(url = clone_url, dest = %dest.display(), "Cloning repository");
         let url_with_token = clone_url.replacen("https://", &format!("https://x:{}@", token), 1);
 
         let _ = std::fs::remove_dir_all(dest);
         git2::Repository::clone(&url_with_token, dest)
             .map_err(|e| EciError::GitHub(format!("Failed to clone repo: {}", e)))?;
+        info!(dest = %dest.display(), "Repository cloned successfully");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_info_fields() {
+        let repo = RepoInfo {
+            full_name: "owner/repo".to_string(),
+            name: "repo".to_string(),
+            description: Some("A test repo".to_string()),
+            default_branch: "main".to_string(),
+            clone_url: "https://github.com/owner/repo".to_string(),
+        };
+        assert_eq!(repo.full_name, "owner/repo");
+        assert_eq!(repo.name, "repo");
+        assert_eq!(repo.description.as_deref(), Some("A test repo"));
+        assert_eq!(repo.default_branch, "main");
+        assert_eq!(repo.clone_url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn repo_info_debug() {
+        let repo = RepoInfo {
+            full_name: "o/r".to_string(),
+            name: "r".to_string(),
+            description: None,
+            default_branch: "main".to_string(),
+            clone_url: "url".to_string(),
+        };
+        let debug = format!("{:?}", repo);
+        assert!(debug.contains("RepoInfo"));
+        assert!(debug.contains("o/r"));
+    }
+
+    #[test]
+    fn repo_info_default_branch() {
+        let repo = RepoInfo {
+            full_name: "o/r".to_string(),
+            name: "r".to_string(),
+            description: None,
+            default_branch: "develop".to_string(),
+            clone_url: "url".to_string(),
+        };
+        assert_eq!(repo.default_branch, "develop");
     }
 }

@@ -8,3 +8,4 @@ eci-core = { path = "../eci-core" }
 eci-docker = { path = "../eci-docker" }
 ratatui = "0.28"
 crossterm = "0.28"
+tracing = { workspace = true }

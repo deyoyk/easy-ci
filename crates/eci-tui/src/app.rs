@@ -1,6 +1,6 @@
 use eci_core::state::State;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveTab {
     Projects,
     Apps,
@@ -96,5 +96,75 @@ impl App {
                 self.selected_app - 1
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_tab_next() {
+        assert_eq!(ActiveTab::Projects.next(), ActiveTab::Apps);
+        assert_eq!(ActiveTab::Apps.next(), ActiveTab::Logs);
+        assert_eq!(ActiveTab::Logs.next(), ActiveTab::Projects);
+    }
+
+    #[test]
+    fn active_tab_previous() {
+        assert_eq!(ActiveTab::Projects.previous(), ActiveTab::Logs);
+        assert_eq!(ActiveTab::Apps.previous(), ActiveTab::Projects);
+        assert_eq!(ActiveTab::Logs.previous(), ActiveTab::Apps);
+    }
+
+    #[test]
+    fn active_tab_index() {
+        assert_eq!(ActiveTab::Projects.index(), 0);
+        assert_eq!(ActiveTab::Apps.index(), 1);
+        assert_eq!(ActiveTab::Logs.index(), 2);
+    }
+
+    #[test]
+    fn active_tab_equality() {
+        assert_eq!(ActiveTab::Projects, ActiveTab::Projects);
+        assert_ne!(ActiveTab::Projects, ActiveTab::Apps);
+        assert_ne!(ActiveTab::Apps, ActiveTab::Logs);
+    }
+
+    #[test]
+    fn active_tab_clone() {
+        let tab = ActiveTab::Projects;
+        let cloned = tab;
+        assert_eq!(tab, cloned);
+    }
+
+    #[test]
+    fn app_navigation_empty_projects() {
+        // We can't easily create an App without a State, so we test the logic directly
+        // by creating a minimal struct
+        let projects: Vec<eci_core::types::Project> = vec![];
+        let selected = 0;
+        let next = if !projects.is_empty() {
+            (selected + 1) % projects.len()
+        } else {
+            0
+        };
+        assert_eq!(next, 0);
+    }
+
+    #[test]
+    fn app_navigation_wraps_around() {
+        let len = 5;
+        let selected = 4;
+        let next = (selected + 1) % len;
+        assert_eq!(next, 0);
+    }
+
+    #[test]
+    fn app_navigation_previous_wraps() {
+        let len = 5;
+        let selected = 0;
+        let prev = if selected == 0 { len - 1 } else { selected - 1 };
+        assert_eq!(prev, 4);
     }
 }

@@ -10,6 +10,7 @@ use futures_util::stream::TryStreamExt;
 use std::collections::HashMap;
 use std::path::Path;
 use tar::Builder as TarBuilder;
+use tracing::{debug, error, info};
 
 #[derive(Clone)]
 pub struct DockerClient {
@@ -27,10 +28,15 @@ pub struct ContainerInfo {
 
 impl DockerClient {
     pub async fn new(config: &DockerConfig) -> Result<Self> {
+        info!(host = %config.host, "Connecting to Docker");
         let docker = if config.host.starts_with("tcp://") {
-            Docker::connect_with_local_defaults()
-                .map_err(|e| EciError::Docker(format!("Docker connect to '{}' failed: {}", config.host, e)))?
+            let addr = config.host.trim_start_matches("tcp://");
+            debug!("Connecting to remote Docker host via TCP: {}", addr);
+            Docker::connect_with_http(addr, 120, bollard::API_DEFAULT_VERSION).map_err(|e| {
+                EciError::Docker(format!("Docker connect to '{}' failed: {}", config.host, e))
+            })?
         } else {
+            debug!("Connecting to local Docker socket");
             Docker::connect_with_local_defaults()
                 .map_err(|e| EciError::Docker(format!("Local Docker connect failed: {}", e)))?
         };
@@ -38,10 +44,18 @@ impl DockerClient {
     }
 
     pub async fn build_image(&self, app_name: &str, dockerfile_path: &Path) -> Result<String> {
+        if !dockerfile_path.exists() {
+            return Err(EciError::Docker(format!(
+                "Dockerfile not found at '{}'",
+                dockerfile_path.display()
+            )));
+        }
+
         let context_path = dockerfile_path
             .parent()
             .ok_or_else(|| EciError::Docker("Invalid Dockerfile path".into()))?;
 
+        info!(app = app_name, context = %context_path.display(), "Building Docker image");
         let tar_path = std::env::temp_dir().join(format!("{}.tar", app_name));
         let tar_file = std::fs::File::create(&tar_path)?;
         let mut tar = TarBuilder::new(tar_file);
@@ -69,9 +83,16 @@ impl DockerClient {
             if let Some(id) = msg.id {
                 image_id = id;
             }
+            if let Some(stream) = msg.stream {
+                debug!(image = app_name, "{}", stream.trim());
+            }
+            if let Some(error) = msg.error {
+                error!(image = app_name, "{}", error.trim());
+            }
         }
 
         let _ = std::fs::remove_file(&tar_path);
+        info!(image_id = %image_id, "Docker image built successfully");
         Ok(image_id)
     }
 
@@ -113,23 +134,28 @@ impl DockerClient {
             .await
             .map_err(|e| EciError::Docker(format!("Create container error: {}", e)))?;
 
+        info!(container_id = %info.id, name = app_name, "Starting container");
         self.docker
             .start_container::<String>(&info.id, None)
             .await
             .map_err(|e| EciError::Docker(format!("Start container error: {}", e)))?;
 
+        info!(container_id = %info.id, "Container started successfully");
         Ok(info.id)
     }
 
     pub async fn stop_container(&self, container_id: &str) -> Result<()> {
+        info!(container_id = container_id, "Stopping container");
         self.docker
             .stop_container(container_id, Some(StopContainerOptions { t: 10 }))
             .await
             .map_err(|e| EciError::Docker(format!("Stop error: {}", e)))?;
+        info!(container_id = container_id, "Container stopped");
         Ok(())
     }
 
     pub async fn remove_container(&self, container_id: &str) -> Result<()> {
+        info!(container_id = container_id, "Removing container");
         self.docker
             .remove_container(
                 container_id,
@@ -140,10 +166,12 @@ impl DockerClient {
             )
             .await
             .map_err(|e| EciError::Docker(format!("Remove error: {}", e)))?;
+        info!(container_id = container_id, "Container removed");
         Ok(())
     }
 
     pub async fn tag_image(&self, source: &str, target: &str) -> Result<()> {
+        debug!(source = source, target = target, "Tagging image");
         use bollard::image::TagImageOptions;
         self.docker
             .tag_image(
@@ -155,12 +183,16 @@ impl DockerClient {
             )
             .await
             .map_err(|e| {
-                EciError::Docker(format!("Tag image '{}' as '{}' failed: {}", source, target, e))
+                EciError::Docker(format!(
+                    "Tag image '{}' as '{}' failed: {}",
+                    source, target, e
+                ))
             })?;
         Ok(())
     }
 
     pub async fn logs(&self, container_id: &str) -> Result<Vec<String>> {
+        debug!(container_id = container_id, "Fetching container logs");
         let options = LogsOptions {
             stdout: true,
             stderr: true,
@@ -183,6 +215,7 @@ impl DockerClient {
     }
 
     pub async fn list_containers(&self) -> Result<Vec<ContainerInfo>> {
+        debug!("Listing all containers");
         let options = ListContainersOptions::<String> {
             all: true,
             ..Default::default()
@@ -228,5 +261,62 @@ impl DockerClient {
                 }
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_info_debug() {
+        let info = ContainerInfo {
+            id: "abc123".to_string(),
+            name: "test-container".to_string(),
+            image: "nginx:latest".to_string(),
+            status: AppStatus::Running,
+            ports: vec!["8080:80".to_string()],
+        };
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("abc123"));
+        assert!(debug.contains("test-container"));
+        assert!(debug.contains("nginx:latest"));
+    }
+
+    #[test]
+    fn container_info_fields() {
+        let info = ContainerInfo {
+            id: "id1".to_string(),
+            name: "name1".to_string(),
+            image: "img1".to_string(),
+            status: AppStatus::Stopped,
+            ports: vec![],
+        };
+        assert_eq!(info.id, "id1");
+        assert_eq!(info.name, "name1");
+        assert_eq!(info.image, "img1");
+        assert_eq!(info.status, AppStatus::Stopped);
+        assert!(info.ports.is_empty());
+    }
+
+    #[test]
+    fn container_info_with_ports() {
+        let info = ContainerInfo {
+            id: "id1".to_string(),
+            name: "name1".to_string(),
+            image: "img1".to_string(),
+            status: AppStatus::Running,
+            ports: vec!["3000:3000".to_string(), "8080:80".to_string()],
+        };
+        assert_eq!(info.ports.len(), 2);
+        assert!(info.ports.contains(&"3000:3000".to_string()));
+        assert!(info.ports.contains(&"8080:80".to_string()));
+    }
+
+    #[test]
+    fn docker_client_clone() {
+        // DockerClient derives Clone, verify the type implements it
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<DockerClient>();
     }
 }

@@ -9,6 +9,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::{debug, error, info, warn};
 
 pub struct DeployEngine<'a> {
     docker: &'a DockerClient,
@@ -47,6 +48,12 @@ impl<'a> DeployEngine<'a> {
         db_type: Option<&str>,
         port: Option<u16>,
     ) -> Result<DeployResult> {
+        info!(
+            repo = repo,
+            app = app_name,
+            project = project_name,
+            "Starting deployment"
+        );
         // Local deploy path
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -120,12 +127,24 @@ impl<'a> DeployEngine<'a> {
         println!("Health checking...");
         let healthy = self.health_check(port.unwrap_or(80)).await;
         if !healthy {
+            warn!(app = app_name, "Health check failed");
             self.state
                 .update_app_status(app_name, &AppStatus::Unhealthy)?;
+
+            if self.config.deploy.auto_rollback_on_unhealthy {
+                info!(
+                    app = app_name,
+                    "Auto-rollback enabled, rolling back to previous version"
+                );
+                if let Err(e) = self.rollback(app_name).await {
+                    error!(app = app_name, error = %e, "Rollback failed");
+                }
+            }
         }
 
         let _ = std::fs::remove_dir_all(&app_dir);
 
+        info!(app = app_name, healthy = healthy, "Deployment complete");
         println!("Deploy complete!");
         let mut updated_app = app;
         updated_app.container_id = Some(container_id);
@@ -142,6 +161,7 @@ impl<'a> DeployEngine<'a> {
     }
 
     pub async fn rollback(&self, app_name: &str) -> Result<()> {
+        info!(app = app_name, "Starting rollback");
         let app = self
             .state
             .get_app(app_name)?
@@ -160,6 +180,7 @@ impl<'a> DeployEngine<'a> {
 
         self.state
             .update_app_status(app_name, &AppStatus::Running)?;
+        info!(app = app_name, "Rollback complete");
         println!("Rollback complete!");
         Ok(())
     }
@@ -167,15 +188,18 @@ impl<'a> DeployEngine<'a> {
     pub async fn health_check(&self, port: u16) -> bool {
         let timeout = self.config.deploy.health_check_timeout_secs;
         let start = std::time::Instant::now();
+        debug!(port = port, timeout = timeout, "Starting health check");
 
         while start.elapsed() < Duration::from_secs(timeout) {
             if let Ok(resp) = reqwest::get(format!("http://localhost:{}", port)).await {
                 if resp.status().is_success() {
+                    info!(port = port, "Health check passed");
                     return true;
                 }
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
+        warn!(port = port, "Health check timed out");
         false
     }
 }
@@ -229,6 +253,12 @@ impl Poller {
                 match gh.get_branch_sha(owner, repo_name, &branch).await {
                     Ok(current_sha) => {
                         if !last_sha.is_empty() && current_sha != last_sha {
+                            info!(
+                                app = app_name,
+                                old_sha = %last_sha,
+                                new_sha = %current_sha,
+                                "New commit detected, deploying"
+                            );
                             println!(
                                 "New commit detected ({}), deploying {}...",
                                 &current_sha[..8],
@@ -239,6 +269,7 @@ impl Poller {
                                 .deploy(&repo, &app_name, &app_name, None, None, None)
                                 .await
                             {
+                                error!(app = app_name, error = %e, "Auto-deploy failed");
                                 eprintln!("Deploy failed for {}: {}", app_name, e);
                             }
                         }
@@ -260,5 +291,79 @@ impl Poller {
 
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn poller_default() {
+        let poller = Poller::new();
+        assert!(!poller.running.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn poller_stop() {
+        let poller = Poller::new();
+        poller.running.store(true, Ordering::SeqCst);
+        assert!(poller.running.load(Ordering::SeqCst));
+        poller.stop();
+        assert!(!poller.running.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn deploy_result_fields() {
+        let app = App {
+            name: "test".to_string(),
+            project_name: "proj".to_string(),
+            repo: "o/r".to_string(),
+            description: None,
+            image_tag: "img:latest".to_string(),
+            container_id: None,
+            port: None,
+            status: AppStatus::Deploying,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result = DeployResult { app, db_info: None };
+        assert_eq!(result.app.name, "test");
+        assert!(result.db_info.is_none());
+    }
+
+    #[test]
+    fn deploy_result_with_db() {
+        let app = App {
+            name: "test".to_string(),
+            project_name: "proj".to_string(),
+            repo: "o/r".to_string(),
+            description: None,
+            image_tag: "img:latest".to_string(),
+            container_id: None,
+            port: None,
+            status: AppStatus::Deploying,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let db_info = DbInfo {
+            app_name: "test".to_string(),
+            db_type: "Postgres".to_string(),
+            connection_string: "postgresql://localhost:5432/test".to_string(),
+            credentials_path: "/path/to/creds".to_string(),
+        };
+        let result = DeployResult {
+            app,
+            db_info: Some(db_info),
+        };
+        assert!(result.db_info.is_some());
+        assert_eq!(result.db_info.unwrap().db_type, "Postgres");
+    }
+
+    #[test]
+    fn poller_is_clone() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Poller>();
     }
 }

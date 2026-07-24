@@ -7,3 +7,4 @@ edition = "2021"
 eci-core = { path = "../eci-core" }
 eci-docker = { path = "../eci-docker" }
 rand = "0.8"
+tracing = { workspace = true }

@@ -11,8 +11,10 @@ use eci_core::state::State;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
+use tracing::debug;
 
 pub fn run_dashboard(state: &State) -> eci_core::error::Result<()> {
+    debug!("Starting TUI dashboard");
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -73,5 +75,6 @@ pub fn run_dashboard(state: &State) -> eci_core::error::Result<()> {
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    debug!("TUI dashboard exited");
     Ok(())
 }
