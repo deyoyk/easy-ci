@@ -190,12 +190,19 @@ impl GitHubClient {
 
         let _ = std::fs::remove_dir_all(dest);
 
-        // Use git CLI directly - more reliable with auth
-        let url_with_token = clone_url.replacen("https://", &format!("https://x:{}@", token), 1);
+        // Use extraheader for auth — avoids URL encoding issues
+        let auth_value = format!("x-access-token:{}", token);
+        let b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            auth_value.as_bytes(),
+        );
+        let header = format!("Authorization: basic {}", b64);
 
         let output = Command::new("git")
+            .arg("-c")
+            .arg(format!("http.extraHeader={}", header))
             .arg("clone")
-            .arg(&url_with_token)
+            .arg(clone_url)
             .arg(dest)
             .output()
             .map_err(|e| EciError::GitHub(format!("Failed to run git: {}", e)))?;

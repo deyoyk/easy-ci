@@ -550,6 +550,7 @@ dependencies = [
 name = "eci-github"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "eci-core",
  "git2",
  "octocrab",
