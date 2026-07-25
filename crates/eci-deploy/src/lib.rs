@@ -83,10 +83,10 @@ impl<'a> DeployEngine<'a> {
         }
 
         println!("Building image...");
-        let image_tag = format!("{}:latest", app_name);
+        let image_tag = format!("{}:latest", app_name.to_lowercase());
         let build_result = self
             .docker
-            .build_image(app_name, &app_dir.join("Dockerfile"))
+            .build_image(&image_tag, &app_dir.join("Dockerfile"))
             .await;
 
         if let Err(e) = build_result {
@@ -106,7 +106,7 @@ impl<'a> DeployEngine<'a> {
             .create_app(app_name, project_name, repo, description, &image_tag)?;
 
         println!("Starting container...");
-        let container_result = self.docker.run_container(app_name, &image_tag, port).await;
+        let container_result = self.docker.run_container(&app_name.to_lowercase(), &image_tag, port).await;
 
         if let Err(e) = container_result {
             let _ = self.state.delete_app(app_name);
