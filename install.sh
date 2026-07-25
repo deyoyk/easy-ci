@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ============================================================================
-# easy-ci installer
-# Detects OS/arch, downloads the correct binary, installs it system-wide,
+# easy-ci installer (Linux)
+# Detects architecture, downloads the correct binary, installs it system-wide,
 # and optionally sets up a systemd user service for background operation.
 #
 # Usage:
@@ -15,6 +15,7 @@ set -euo pipefail
 #   --no-service        Skip systemd service setup
 #   --version VERSION   Install a specific version (default: latest)
 #   --prefix DIR        Install prefix (default: /usr/local)
+#   --musl              Use musl (static) binary instead of glibc
 # ============================================================================
 
 REPO="deyoyk/easy-ci"
@@ -22,6 +23,7 @@ BINARY_NAME="eci"
 INSTALL_PREFIX="/usr/local"
 SETUP_SERVICE=true
 VERSION=""
+USE_MUSL=false
 
 # Colors
 RED='\033[0;31m'
@@ -50,9 +52,10 @@ Usage:
 
 Options:
   --help              Show this help message
-  --no-service        Skip systemd/launchd service setup
+  --no-service        Skip systemd service setup
   --version VERSION   Install a specific version (default: latest)
   --prefix DIR        Install prefix (default: /usr/local)
+  --musl              Use musl (static) binary for musl-based distros
 
 Examples:
   # Install latest version
@@ -74,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-service)
             SETUP_SERVICE=false
+            shift
+            ;;
+        --musl)
+            USE_MUSL=true
             shift
             ;;
         --version)
@@ -98,9 +105,7 @@ detect_os() {
     os="$(uname -s)"
     case "$os" in
         Linux*)     echo "linux" ;;
-        Darwin*)    echo "darwin" ;;
-        MINGW*|MSYS*|CYGWIN*)  echo "windows" ;;
-        *)          die "Unsupported OS: $os" ;;
+        *)          die "This installer only supports Linux. Detected: $os" ;;
     esac
 }
 
@@ -108,16 +113,24 @@ detect_arch() {
     local arch
     arch="$(uname -m)"
     case "$arch" in
-        x86_64|amd64)   echo "x86_64" ;;
-        aarch64|arm64)   echo "aarch64" ;;
-        *)               die "Unsupported architecture: $arch" ;;
+        x86_64|amd64)           echo "x86_64" ;;
+        aarch64|arm64)          echo "aarch64" ;;
+        armv7l|armhf|armv7)     echo "armv7" ;;
+        i?86)                   echo "i686" ;;
+        *)                      die "Unsupported architecture: $arch" ;;
     esac
 }
 
 OS="$(detect_os)"
 ARCH="$(detect_arch)"
 
-info "Detected platform: ${BOLD}${OS}/${ARCH}${NC}"
+# Determine libc type
+LIBC="glibc"
+if [[ "$USE_MUSL" == "true" ]]; then
+    LIBC="musl"
+fi
+
+info "Detected platform: ${BOLD}${OS}/${ARCH}${NC} (${LIBC})"
 
 # ============================================================================
 # Check dependencies
@@ -133,7 +146,7 @@ check_deps() {
         missing+=("tar")
     fi
 
-    if [[ "$OS" == "linux" ]] && [[ "$SETUP_SERVICE" == "true" ]]; then
+    if [[ "$SETUP_SERVICE" == "true" ]]; then
         if ! command -v systemctl &>/dev/null; then
             warn "systemctl not found — will skip service setup"
             SETUP_SERVICE=false
@@ -179,10 +192,15 @@ info "Installing version: ${BOLD}${VERSION}${NC}"
 # ============================================================================
 download_binary() {
     local version="$1"
-    local os="$2"
-    local arch="$3"
+    local arch="$2"
+    local libc="$3"
 
-    local archive_name="eci-${os}-${arch}.tar.gz"
+    local suffix=""
+    if [[ "$libc" == "musl" ]]; then
+        suffix="-musl"
+    fi
+
+    local archive_name="eci-linux-${arch}${suffix}.tar.gz"
     local url="https://github.com/${REPO}/releases/download/v${version}/${archive_name}"
 
     local tmp_dir
@@ -201,12 +219,10 @@ download_binary() {
 
     local binary_path="${tmp_dir}/eci"
     if [[ ! -f "$binary_path" ]]; then
-        # Try the artifact name pattern
-        binary_path="${tmp_dir}/eci-${os}-${arch}"
+        binary_path="${tmp_dir}/eci-linux-${arch}${suffix}"
     fi
 
     if [[ ! -f "$binary_path" ]]; then
-        # Find any eci binary in the tmp dir
         binary_path="$(find "$tmp_dir" -maxdepth 1 -name 'eci*' -type f | head -1)"
     fi
 
@@ -218,7 +234,7 @@ download_binary() {
     echo "$binary_path"
 }
 
-BINARY_PATH="$(download_binary "$VERSION" "$OS" "$ARCH")"
+BINARY_PATH="$(download_binary "$VERSION" "$ARCH" "$LIBC")"
 
 # ============================================================================
 # Install binary
@@ -230,12 +246,10 @@ install_binary() {
 
     info "Installing to ${dest}..."
 
-    # Create install directory if it doesn't exist
     if [[ ! -d "$install_dir" ]]; then
         mkdir -p "$install_dir" || die "Failed to create ${install_dir} (try with sudo)"
     fi
 
-    # Try installing without sudo first, fall back to sudo
     if [[ -w "$install_dir" ]]; then
         cp "$binary_path" "$dest"
     else
@@ -262,7 +276,7 @@ else
 fi
 
 # ============================================================================
-# Setup systemd service (Linux)
+# Setup systemd service
 # ============================================================================
 setup_systemd_service() {
     local service_dir="${HOME}/.config/systemd/user"
@@ -289,7 +303,6 @@ Environment=RUST_LOG=info
 WantedBy=default.target
 EOF
 
-    # Enable and start the service
     systemctl --user daemon-reload
     systemctl --user enable "${BINARY_NAME}.service"
 
@@ -299,76 +312,8 @@ EOF
     info "View logs:  journalctl --user -u ${BINARY_NAME} -f"
 }
 
-# ============================================================================
-# Setup launchd service (macOS)
-# ============================================================================
-setup_launchd_service() {
-    local service_dir="${HOME}/Library/LaunchAgents"
-    local service_file="${service_dir}/com.deyoyk.${BINARY_NAME}.plist"
-
-    info "Setting up launchd agent..."
-
-    mkdir -p "$service_dir"
-
-    cat > "$service_file" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.deyoyk.${BINARY_NAME}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${INSTALL_PREFIX}/bin/${BINARY_NAME}</string>
-        <string>dashboard</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>${HOME}/.eci/logs/service.log</string>
-    <key>StandardErrorPath</key>
-    <string>${HOME}/.eci/logs/service.err</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>RUST_LOG</key>
-        <string>info</string>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
-    </dict>
-</dict>
-</plist>
-EOF
-
-    mkdir -p "${HOME}/.eci/logs"
-
-    # Load the service
-    launchctl unload "$service_file" 2>/dev/null || true
-    launchctl load "$service_file"
-
-    success "LaunchAgent created and loaded"
-    info "Start with: launchctl start com.deyoyk.${BINARY_NAME}"
-    info "Stop with:  launchctl stop com.deyoyk.${BINARY_NAME}"
-    info "View logs:  tail -f ${HOME}/.eci/logs/service.log"
-}
-
-# ============================================================================
-# Setup service based on OS
-# ============================================================================
 if [[ "$SETUP_SERVICE" == "true" ]]; then
-    case "$OS" in
-        linux)
-            setup_systemd_service
-            ;;
-        darwin)
-            setup_launchd_service
-            ;;
-        windows)
-            warn "Windows service setup not supported yet"
-            warn "You can run '${BINARY_NAME} dashboard' manually"
-            ;;
-    esac
+    setup_systemd_service
 fi
 
 # ============================================================================
@@ -386,19 +331,10 @@ echo -e "    ${BOLD}${BINARY_NAME} deploy <repo>${NC}   Deploy a GitHub repo"
 echo -e "    ${BOLD}${BINARY_NAME} dashboard${NC}       Launch the TUI dashboard"
 echo ""
 if [[ "$SETUP_SERVICE" == "true" ]]; then
-    case "$OS" in
-        linux)
-            echo -e "  Service management:"
-            echo -e "    ${BOLD}systemctl --user start ${BINARY_NAME}${NC}"
-            echo -e "    ${BOLD}systemctl --user stop ${BINARY_NAME}${NC}"
-            echo -e "    ${BOLD}systemctl --user status ${BINARY_NAME}${NC}"
-            ;;
-        darwin)
-            echo -e "  Service management:"
-            echo -e "    ${BOLD}launchctl start com.deyoyk.${BINARY_NAME}${NC}"
-            echo -e "    ${BOLD}launchctl stop com.deyoyk.${BINARY_NAME}${NC}"
-            ;;
-    esac
+    echo -e "  Service management:"
+    echo -e "    ${BOLD}systemctl --user start ${BINARY_NAME}${NC}"
+    echo -e "    ${BOLD}systemctl --user stop ${BINARY_NAME}${NC}"
+    echo -e "    ${BOLD}systemctl --user status ${BINARY_NAME}${NC}"
 fi
 echo ""
 echo -e "  Docs: ${BLUE}https://github.com/deyoyk/easy-ci${NC}"

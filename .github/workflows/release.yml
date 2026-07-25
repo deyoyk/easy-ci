@@ -81,18 +81,22 @@ jobs:
             os: ubuntu-latest
             artifact: eci-linux-aarch64
             archive: eci-linux-aarch64.tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: eci-darwin-x86_64
-            archive: eci-darwin-x86_64.tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: eci-darwin-aarch64
-            archive: eci-darwin-aarch64.tar.gz
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact: eci-windows-x86_64.exe
-            archive: eci-windows-x86_64.zip
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            artifact: eci-linux-armv7
+            archive: eci-linux-armv7.tar.gz
+          - target: i686-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: eci-linux-i686
+            archive: eci-linux-i686.tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: eci-linux-aarch64-musl
+            archive: eci-linux-aarch64-musl.tar.gz
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: eci-linux-x86_64-musl
+            archive: eci-linux-x86_64-musl.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -113,31 +117,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.target }}-
 
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install cross-compilation tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          case "${{ matrix.target }}" in
+            aarch64-*)
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+              ;;
+            armv7-*)
+              sudo apt-get install -y gcc-arm-linux-gnueabihf
+              echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+              ;;
+            i686-*)
+              sudo apt-get install -y gcc-multilib
+              echo "CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=gcc" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Install musl-tools for musl targets
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get install -y musl-tools
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p eci
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package
         run: |
           cp target/${{ matrix.target }}/release/eci ${{ matrix.artifact }}
           chmod +x ${{ matrix.artifact }}
           tar czf ${{ matrix.archive }} ${{ matrix.artifact }}
-          echo "ARCHIVE=${{ matrix.archive }}" >> $GITHUB_ENV
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Copy-Item "target/${{ matrix.target }}/release/eci.exe" -Destination "${{ matrix.artifact }}"
-          Compress-Archive -Path "${{ matrix.artifact }}" -DestinationPath "${{ matrix.archive }}"
-          echo "ARCHIVE=${{ matrix.archive }}" >> $env:GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -175,13 +185,14 @@ jobs:
             ### Manual download
             Download the appropriate binary for your platform from the assets below.
 
-            | Platform | Architecture | Archive |
-            |----------|-------------|---------|
-            | Linux | x86_64 | `eci-linux-x86_64.tar.gz` |
-            | Linux | ARM64 | `eci-linux-aarch64.tar.gz` |
-            | macOS | x86_64 | `eci-darwin-x86_64.tar.gz` |
-            | macOS | ARM64 (Apple Silicon) | `eci-darwin-aarch64.tar.gz` |
-            | Windows | x86_64 | `eci-windows-x86_64.zip` |
+            | Architecture | Archive |
+            |-------------|---------|
+            | x86_64 (glibc) | `eci-linux-x86_64.tar.gz` |
+            | ARM64 (glibc) | `eci-linux-aarch64.tar.gz` |
+            | ARMv7 (glibc) | `eci-linux-armv7.tar.gz` |
+            | i686 (glibc) | `eci-linux-i686.tar.gz` |
+            | x86_64 (musl) | `eci-linux-x86_64-musl.tar.gz` |
+            | ARM64 (musl) | `eci-linux-aarch64-musl.tar.gz` |
           files: artifacts/*
 
   docker:

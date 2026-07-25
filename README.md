@@ -11,10 +11,10 @@ curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | ba
 ```
 
 This will:
-- Detect your OS and architecture automatically
+- Detect your CPU architecture automatically
 - Download the correct binary
 - Install it to `/usr/local/bin`
-- Set up a background service (systemd on Linux, launchd on macOS)
+- Set up a systemd user service for background operation
 
 ### Install specific version
 
@@ -28,17 +28,26 @@ curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | ba
 curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --no-service
 ```
 
+### Install static (musl) binary
+
+For musl-based distros (Alpine, Void, etc.):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --musl
+```
+
 ### Manual install
 
-Download the latest binary for your platform from [GitHub Releases](https://github.com/deyoyk/easy-ci/releases).
+Download the latest binary for your architecture from [GitHub Releases](https://github.com/deyoyk/easy-ci/releases).
 
-| Platform | Architecture | Archive |
-|----------|-------------|---------|
-| Linux | x86_64 | `eci-linux-x86_64.tar.gz` |
-| Linux | ARM64 | `eci-linux-aarch64.tar.gz` |
-| macOS | x86_64 | `eci-darwin-x86_64.tar.gz` |
-| macOS | ARM64 (Apple Silicon) | `eci-darwin-aarch64.tar.gz` |
-| Windows | x86_64 | `eci-windows-x86_64.zip` |
+| Architecture | Archive |
+|-------------|---------|
+| x86_64 (glibc) | `eci-linux-x86_64.tar.gz` |
+| ARM64 (glibc) | `eci-linux-aarch64.tar.gz` |
+| ARMv7 (glibc) | `eci-linux-armv7.tar.gz` |
+| i686 (glibc) | `eci-linux-i686.tar.gz` |
+| x86_64 (musl) | `eci-linux-x86_64-musl.tar.gz` |
+| ARM64 (musl) | `eci-linux-aarch64-musl.tar.gz` |
 
 ```bash
 # Example for Linux x86_64
@@ -106,9 +115,7 @@ Options:
 
 ## Background Service
 
-The installer sets up a background service that runs `eci dashboard` on startup.
-
-### Linux (systemd)
+The installer sets up a systemd user service that runs `eci dashboard` on startup.
 
 ```bash
 # Start the service
@@ -125,19 +132,6 @@ journalctl --user -u eci -f
 
 # Enable on boot (enabled by default)
 systemctl --user enable eci
-```
-
-### macOS (launchd)
-
-```bash
-# Start the service
-launchctl start com.deyoyk.eci
-
-# Stop the service
-launchctl stop com.deyoyk.eci
-
-# View logs
-tail -f ~/.eci/logs/service.log
 ```
 
 ## Configuration
@@ -162,15 +156,14 @@ auto_rollback_on_unhealthy = true
 - `RUST_LOG` — Set log level (e.g., `debug`, `info`, `warn`)
 - `ECI_CONFIG_DIR` — Override config directory (default: `~/.eci`)
 
-## Supported Platforms
+## Supported Architectures
 
-| OS | Architecture | Status |
-|----|-------------|--------|
-| Linux | x86_64 | Supported |
-| Linux | ARM64 | Supported |
-| macOS | x86_64 | Supported |
-| macOS | ARM64 (Apple Silicon) | Supported |
-| Windows | x86_64 | Supported |
+| Architecture | GLIBC | Musl |
+|-------------|-------|------|
+| x86_64 | Supported | Supported |
+| ARM64 | Supported | Supported |
+| ARMv7 | Supported | — |
+| i686 | Supported | — |
 
 ## Development
 
