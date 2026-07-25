@@ -31,9 +31,9 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+info()    { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 die()     { error "$*"; exit 1; }
 
@@ -55,14 +55,11 @@ Options:
   --prefix DIR        Install prefix (default: /usr/local)
 
 Examples:
-  # Install latest version
+  # Install or update to latest version
   curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash
 
   # Install specific version
   curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --version 0.1.42
-
-  # Install without service setup
-  curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --no-service
 EOF
     exit 0
 }
@@ -120,6 +117,20 @@ ARCH="$(detect_arch)"
 info "Detected platform: ${BOLD}${OS}/${ARCH}${NC}"
 
 # ============================================================================
+# Check if already installed, offer update
+# ============================================================================
+check_existing() {
+    if command -v "$BINARY_NAME" &>/dev/null; then
+        local current_version
+        current_version=$("$BINARY_NAME" --version 2>/dev/null | head -1 || echo "unknown")
+        info "Found existing installation: ${BOLD}${current_version}${NC}"
+        info "Updating to latest version..."
+    fi
+}
+
+check_existing
+
+# ============================================================================
 # Check dependencies
 # ============================================================================
 check_deps() {
@@ -133,11 +144,9 @@ check_deps() {
         missing+=("tar")
     fi
 
-    if [[ "$SETUP_SERVICE" == "true" ]]; then
-        if ! command -v systemctl &>/dev/null; then
-            warn "systemctl not found — will skip service setup"
-            SETUP_SERVICE=false
-        fi
+    if [[ "$SETUP_SERVICE" == "true" ]] && ! command -v systemctl &>/dev/null; then
+        warn "systemctl not found — will skip service setup"
+        SETUP_SERVICE=false
     fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -151,14 +160,13 @@ check_deps
 # Determine version
 # ============================================================================
 get_latest_version() {
-    info "Fetching latest version..."
     local url="https://api.github.com/repos/${REPO}/releases/latest"
     local version
 
     if command -v curl &>/dev/null; then
-        version=$(curl -fsSL "$url" | grep '"tag_name"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/')
+        version=$(curl -fsSL "$url" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/')
     else
-        version=$(wget -qO- "$url" | grep '"tag_name"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/')
+        version=$(wget -qO- "$url" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/')
     fi
 
     if [[ -z "$version" ]]; then
@@ -169,6 +177,7 @@ get_latest_version() {
 }
 
 if [[ -z "$VERSION" ]]; then
+    info "Fetching latest version..."
     VERSION="$(get_latest_version)"
 fi
 
@@ -249,7 +258,7 @@ install_binary "$BINARY_PATH"
 # ============================================================================
 info "Verifying installation..."
 if command -v "$BINARY_NAME" &>/dev/null; then
-    INSTALLED_VERSION=$("$BINARY_NAME" --version 2>/dev/null || echo "unknown")
+    INSTALLED_VERSION=$("$BINARY_NAME" --version 2>/dev/null | head -1 || echo "unknown")
     success "Installed successfully: ${BOLD}${INSTALLED_VERSION}${NC}"
 else
     warn "Binary installed but not found in PATH"
