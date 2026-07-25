@@ -75,6 +75,7 @@ impl DockerClient {
             .build_image(build_opts, None, Some(tar_bytes.into()));
 
         let mut image_id = String::new();
+        let mut build_error = None;
         while let Some(msg) = stream
             .try_next()
             .await
@@ -88,7 +89,13 @@ impl DockerClient {
             }
             if let Some(error) = msg.error {
                 error!(image = app_name, "{}", error.trim());
+                build_error = Some(error);
             }
+        }
+
+        if image_id.is_empty() {
+            let err_msg = build_error.unwrap_or_else(|| "Unknown build error".to_string());
+            return Err(EciError::Docker(format!("Build failed: {}", err_msg)));
         }
 
         let _ = std::fs::remove_file(&tar_path);
