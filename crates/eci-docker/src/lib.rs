@@ -1,16 +1,11 @@
-use bollard::container::{
-    ListContainersOptions, LogsOptions, RemoveContainerOptions, StopContainerOptions,
-};
-use bollard::image::BuildImageOptions;
+use bollard::container::LogsOptions;
 use bollard::Docker;
 use eci_core::config::DockerConfig;
 use eci_core::error::{EciError, Result};
 use eci_core::types::AppStatus;
 use futures_util::stream::TryStreamExt;
-use std::collections::HashMap;
 use std::path::Path;
-use tar::Builder as TarBuilder;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 #[derive(Clone)]
 pub struct DockerClient {
@@ -44,6 +39,8 @@ impl DockerClient {
     }
 
     pub async fn build_image(&self, app_name: &str, dockerfile_path: &Path) -> Result<String> {
+        use std::process::Command;
+
         if !dockerfile_path.exists() {
             return Err(EciError::Docker(format!(
                 "Dockerfile not found at '{}'",
@@ -56,66 +53,24 @@ impl DockerClient {
             .ok_or_else(|| EciError::Docker("Invalid Dockerfile path".into()))?;
 
         info!(app = app_name, context = %context_path.display(), "Building Docker image");
-        let tar_path = std::env::temp_dir().join(format!("{}.tar", app_name));
-        let tar_file = std::fs::File::create(&tar_path)?;
-        let mut tar = TarBuilder::new(tar_file);
 
-        for entry in std::fs::read_dir(context_path)
-            .map_err(|e| EciError::Docker(format!("Failed to read context: {}", e)))?
-        {
-            let entry = entry.map_err(|e| EciError::Docker(format!("Read dir error: {}", e)))?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str == ".git" || name_str == "target" || name_str == "node_modules" {
-                continue;
-            }
-            if entry.path().is_dir() {
-                tar.append_dir_all(&name, entry.path())?;
-            } else {
-                tar.append_file(&name, &mut std::fs::File::open(entry.path())?)?;
-            }
-        }
-        tar.finish()?;
+        let output = Command::new("docker")
+            .arg("build")
+            .arg("-t")
+            .arg(app_name)
+            .arg("-f")
+            .arg(dockerfile_path)
+            .arg(context_path)
+            .output()
+            .map_err(|e| EciError::Docker(format!("Failed to run docker: {}", e)))?;
 
-        let build_opts = BuildImageOptions {
-            dockerfile: "Dockerfile",
-            t: app_name,
-            rm: true,
-            ..Default::default()
-        };
-
-        let tar_bytes = std::fs::read(&tar_path)?;
-        let mut stream = self
-            .docker
-            .build_image(build_opts, None, Some(tar_bytes.into()));
-
-        let mut image_id = String::new();
-        let mut build_error = None;
-        while let Some(msg) = stream
-            .try_next()
-            .await
-            .map_err(|e| EciError::Docker(format!("Build error: {}", e)))?
-        {
-            if let Some(id) = msg.id {
-                image_id = id;
-            }
-            if let Some(stream) = msg.stream {
-                debug!(image = app_name, "{}", stream.trim());
-            }
-            if let Some(error) = msg.error {
-                error!(image = app_name, "{}", error.trim());
-                build_error = Some(error);
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(EciError::Docker(format!("Build failed: {}", stderr.trim())));
         }
 
-        if image_id.is_empty() {
-            let err_msg = build_error.unwrap_or_else(|| "Unknown build error".to_string());
-            return Err(EciError::Docker(format!("Build failed: {}", err_msg)));
-        }
-
-        let _ = std::fs::remove_file(&tar_path);
-        info!(image_id = %image_id, "Docker image built successfully");
-        Ok(image_id)
+        info!(image = app_name, "Docker image built successfully");
+        Ok(app_name.to_string())
     }
 
     pub async fn run_container(
@@ -124,92 +79,79 @@ impl DockerClient {
         image: &str,
         port: Option<u16>,
     ) -> Result<String> {
-        use bollard::container::CreateContainerOptions;
-        use bollard::models::{HostConfig, PortBinding};
+        use std::process::Command;
 
-        let mut port_bindings = HashMap::new();
+        // Remove existing container with same name if any
+        let _ = Command::new("docker")
+            .arg("rm")
+            .arg("-f")
+            .arg(app_name)
+            .output();
+
+        let mut args = vec![
+            "run", "-d", "--name", app_name,
+        ];
+
+        let port_arg;
         if let Some(p) = port {
-            let binding = PortBinding {
-                host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some(p.to_string()),
-            };
-            port_bindings.insert("80/tcp".to_string(), Some(vec![binding]));
+            port_arg = format!("{}:80", p);
+            args.push("-p");
+            args.push(&port_arg);
         }
 
-        let options = CreateContainerOptions {
-            name: app_name.to_string(),
-            ..Default::default()
-        };
+        args.push(image);
 
-        let config = bollard::container::Config {
-            image: Some(image.to_string()),
-            host_config: Some(HostConfig {
-                port_bindings: Some(port_bindings),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+        let output = Command::new("docker")
+            .args(&args)
+            .output()
+            .map_err(|e| EciError::Docker(format!("Failed to run docker: {}", e)))?;
 
-        let info = self
-            .docker
-            .create_container(Some(options), config)
-            .await
-            .map_err(|e| EciError::Docker(format!("Create container error: {}", e)))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(EciError::Docker(format!("Failed to start container: {}", stderr.trim())));
+        }
 
-        info!(container_id = %info.id, name = app_name, "Starting container");
-        self.docker
-            .start_container::<String>(&info.id, None)
-            .await
-            .map_err(|e| EciError::Docker(format!("Start container error: {}", e)))?;
-
-        info!(container_id = %info.id, "Container started successfully");
-        Ok(info.id)
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info!(container_id = %container_id, name = app_name, "Container started");
+        Ok(container_id)
     }
 
     pub async fn stop_container(&self, container_id: &str) -> Result<()> {
+        use std::process::Command;
+
         info!(container_id = container_id, "Stopping container");
-        self.docker
-            .stop_container(container_id, Some(StopContainerOptions { t: 10 }))
-            .await
+        Command::new("docker")
+            .arg("stop")
+            .arg(container_id)
+            .output()
             .map_err(|e| EciError::Docker(format!("Stop error: {}", e)))?;
         info!(container_id = container_id, "Container stopped");
         Ok(())
     }
 
     pub async fn remove_container(&self, container_id: &str) -> Result<()> {
+        use std::process::Command;
+
         info!(container_id = container_id, "Removing container");
-        self.docker
-            .remove_container(
-                container_id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
-            )
-            .await
+        Command::new("docker")
+            .arg("rm")
+            .arg(container_id)
+            .output()
             .map_err(|e| EciError::Docker(format!("Remove error: {}", e)))?;
         info!(container_id = container_id, "Container removed");
         Ok(())
     }
 
     pub async fn tag_image(&self, source: &str, target: &str) -> Result<()> {
+        use std::process::Command;
+
         debug!(source = source, target = target, "Tagging image");
-        use bollard::image::TagImageOptions;
-        self.docker
-            .tag_image(
-                source,
-                Some(TagImageOptions {
-                    repo: target.to_string(),
-                    ..Default::default()
-                }),
-            )
-            .await
-            .map_err(|e| {
-                EciError::Docker(format!(
-                    "Tag image '{}' as '{}' failed: {}",
-                    source, target, e
-                ))
-            })?;
+        Command::new("docker")
+            .arg("tag")
+            .arg(source)
+            .arg(target)
+            .output()
+            .map_err(|e| EciError::Docker(format!("Tag error: {}", e)))?;
         Ok(())
     }
 
@@ -237,52 +179,41 @@ impl DockerClient {
     }
 
     pub async fn list_containers(&self) -> Result<Vec<ContainerInfo>> {
+        use std::process::Command;
+
         debug!("Listing all containers");
-        let options = ListContainersOptions::<String> {
-            all: true,
-            ..Default::default()
-        };
+        let output = Command::new("docker")
+            .args(["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"])
+            .output()
+            .map_err(|e| EciError::Docker(format!("Failed to run docker: {}", e)))?;
 
-        let containers = self
-            .docker
-            .list_containers(Some(options))
-            .await
-            .map_err(|e| EciError::Docker(format!("List error: {}", e)))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut containers = Vec::new();
 
-        Ok(containers
-            .into_iter()
-            .map(|c| {
-                let name = c
-                    .names
-                    .and_then(|n| n.first().cloned())
-                    .unwrap_or_default()
-                    .trim_start_matches('/')
-                    .to_string();
-
-                let status = match c.state.as_deref() {
-                    Some("running") => AppStatus::Running,
-                    Some("exited") => AppStatus::Stopped,
-                    _ => AppStatus::Stopped,
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 4 {
+                let status = if parts[3].contains("Up") {
+                    AppStatus::Running
+                } else {
+                    AppStatus::Stopped
                 };
-
-                ContainerInfo {
-                    id: c.id.unwrap_or_default(),
-                    name,
-                    image: c.image.unwrap_or_default(),
+                let ports = if parts.len() >= 5 {
+                    parts[4].split(',').map(|s| s.trim().to_string()).collect()
+                } else {
+                    vec![]
+                };
+                containers.push(ContainerInfo {
+                    id: parts[0].to_string(),
+                    name: parts[1].to_string(),
+                    image: parts[2].to_string(),
                     status,
-                    ports: c
-                        .ports
-                        .map(|ps| {
-                            ps.iter()
-                                .filter_map(|p| {
-                                    p.public_port.map(|pp| format!("{}:{}", pp, p.private_port))
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                }
-            })
-            .collect())
+                    ports,
+                });
+            }
+        }
+
+        Ok(containers)
     }
 }
 
