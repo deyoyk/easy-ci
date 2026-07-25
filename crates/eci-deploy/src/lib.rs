@@ -62,8 +62,13 @@ impl<'a> DeployEngine<'a> {
         let app_dir = std::env::temp_dir().join(format!("eci-{}-{}", app_name, timestamp));
 
         println!("Cloning {}...", repo);
+        let clone_url = if repo.starts_with("http") {
+            repo.to_string()
+        } else {
+            format!("https://github.com/{}", repo)
+        };
         GitHubClient::clone_repo(
-            &format!("https://github.com/{}", repo),
+            &clone_url,
             &app_dir,
             &self.config.github.token,
         )
