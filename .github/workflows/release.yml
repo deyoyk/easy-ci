@@ -2,13 +2,7 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g. v0.1.0)'
-        required: false
+    branches: [main]
 
 permissions:
   contents: write
@@ -56,8 +50,6 @@ jobs:
     outputs:
       version: ${{ steps.calc.outputs.version }}
       tag: ${{ steps.calc.outputs.tag }}
-      upload_url: ${{ steps.release.outputs.upload_url }}
-      asset_upload_url: ${{ steps.release.outputs.asset_upload_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,15 +58,9 @@ jobs:
       - name: Determine version
         id: calc
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          elif [ -n "${{ github.ref_name }}" ] && [[ "${{ github.ref_name }}" == v* ]]; then
-            TAG="${{ github.ref_name }}"
-          else
-            COUNT=$(git rev-list --count HEAD)
-            TAG="v0.1.${COUNT}"
-          fi
-          VERSION="${TAG#v}"
+          COUNT=$(git rev-list --count HEAD)
+          VERSION="0.1.${COUNT}"
+          TAG="v${VERSION}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}, Tag: ${TAG}"
