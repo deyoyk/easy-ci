@@ -131,8 +131,57 @@ fn cmd_init() -> eci_core::error::Result<()> {
     print_banner();
 
     let existing = eci_core::config::Config::load();
-    if existing.is_ok() {
-        println!("  {}  Already initialized", success("✔"));
+
+    if let Ok(ref cfg) = existing {
+        println!("  {}  Config found at ~/.eci/config.toml", success("✔"));
+        println!("  Current GitHub token: {}{}",
+            &cfg.github.token[..4.min(cfg.github.token.len())],
+            "*".repeat(cfg.github.token.len().saturating_sub(4)));
+        println!("  Docker host: {}", cfg.docker.host);
+        println!();
+
+        if !Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Do you want to update the config?")
+            .default(false)
+            .interact()
+            .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?
+        {
+            println!("  {}  No changes made", success("✔"));
+            return Ok(());
+        }
+
+        println!();
+        println!("  {}", header("Update config (press Enter to keep current value)"));
+        println!();
+
+        let github_token: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("GitHub token")
+            .default(cfg.github.token.clone())
+            .interact_text()
+            .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+        let host: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Docker host")
+            .default(cfg.docker.host.clone())
+            .interact_text()
+            .map_err(|e| eci_core::error::EciError::Config(format!("Input error: {}", e)))?;
+
+        let config = eci_core::config::Config {
+            github: eci_core::config::GitHubConfig {
+                token: github_token,
+                default_org: cfg.github.default_org.clone(),
+            },
+            docker: eci_core::config::DockerConfig { host },
+            deploy: eci_core::config::DeployConfig {
+                health_check_timeout_secs: cfg.deploy.health_check_timeout_secs,
+                auto_rollback_on_unhealthy: cfg.deploy.auto_rollback_on_unhealthy,
+            },
+        };
+
+        config.save()?;
+        println!();
+        println!("  {}  Config updated", success("✔"));
+        println!();
         return Ok(());
     }
 
