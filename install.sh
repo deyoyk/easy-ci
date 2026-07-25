@@ -242,12 +242,13 @@ install_binary() {
 
     if [[ -w "$install_dir" ]]; then
         cp "$binary_path" "$dest"
+        chmod +x "$dest"
     else
         info "Need elevated permissions to install to ${install_dir}"
         sudo cp "$binary_path" "$dest"
+        sudo chmod +x "$dest"
     fi
 
-    chmod +x "$dest"
     success "Binary installed to ${dest}"
 }
 
