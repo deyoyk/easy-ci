@@ -184,12 +184,30 @@ impl GitHubClient {
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
+        use git2::build::RepoBuilder;
+        use git2::{Cred, FetchOptions, RemoteCallbacks};
+
         debug!(url = clone_url, dest = %dest.display(), "Cloning repository");
-        let url_with_token = clone_url.replacen("https://", &format!("https://x:{}@", token), 1);
 
         let _ = std::fs::remove_dir_all(dest);
-        git2::Repository::clone(&url_with_token, dest)
+
+        let mut callbacks = RemoteCallbacks::new();
+        let token = token.to_string();
+        let t = token.clone();
+        callbacks.credentials(move |_url, _username_from_url, _allowed| {
+            Cred::userpass_plaintext("x-access-token", &t)
+        });
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        let mut builder = RepoBuilder::new();
+        builder.fetch_options(fetch_options);
+
+        builder
+            .clone(clone_url, dest)
             .map_err(|e| EciError::GitHub(format!("Failed to clone repo: {}", e)))?;
+
         info!(dest = %dest.display(), "Repository cloned successfully");
         Ok(())
     }
