@@ -15,7 +15,6 @@ set -euo pipefail
 #   --no-service        Skip systemd service setup
 #   --version VERSION   Install a specific version (default: latest)
 #   --prefix DIR        Install prefix (default: /usr/local)
-#   --musl              Use musl (static) binary instead of glibc
 # ============================================================================
 
 REPO="deyoyk/easy-ci"
@@ -23,7 +22,6 @@ BINARY_NAME="eci"
 INSTALL_PREFIX="/usr/local"
 SETUP_SERVICE=true
 VERSION=""
-USE_MUSL=false
 
 # Colors
 RED='\033[0;31m'
@@ -55,7 +53,6 @@ Options:
   --no-service        Skip systemd service setup
   --version VERSION   Install a specific version (default: latest)
   --prefix DIR        Install prefix (default: /usr/local)
-  --musl              Use musl (static) binary for musl-based distros
 
 Examples:
   # Install latest version
@@ -77,10 +74,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-service)
             SETUP_SERVICE=false
-            shift
-            ;;
-        --musl)
-            USE_MUSL=true
             shift
             ;;
         --version)
@@ -124,13 +117,7 @@ detect_arch() {
 OS="$(detect_os)"
 ARCH="$(detect_arch)"
 
-# Determine libc type
-LIBC="glibc"
-if [[ "$USE_MUSL" == "true" ]]; then
-    LIBC="musl"
-fi
-
-info "Detected platform: ${BOLD}${OS}/${ARCH}${NC} (${LIBC})"
+info "Detected platform: ${BOLD}${OS}/${ARCH}${NC}"
 
 # ============================================================================
 # Check dependencies
@@ -193,14 +180,8 @@ info "Installing version: ${BOLD}${VERSION}${NC}"
 download_binary() {
     local version="$1"
     local arch="$2"
-    local libc="$3"
 
-    local suffix=""
-    if [[ "$libc" == "musl" ]]; then
-        suffix="-musl"
-    fi
-
-    local archive_name="eci-linux-${arch}${suffix}.tar.gz"
+    local archive_name="eci-linux-${arch}.tar.gz"
     local url="https://github.com/${REPO}/releases/download/v${version}/${archive_name}"
 
     local tmp_dir
@@ -219,7 +200,7 @@ download_binary() {
 
     local binary_path="${tmp_dir}/eci"
     if [[ ! -f "$binary_path" ]]; then
-        binary_path="${tmp_dir}/eci-linux-${arch}${suffix}"
+        binary_path="${tmp_dir}/eci-linux-${arch}"
     fi
 
     if [[ ! -f "$binary_path" ]]; then
@@ -234,7 +215,7 @@ download_binary() {
     echo "$binary_path"
 }
 
-BINARY_PATH="$(download_binary "$VERSION" "$ARCH" "$LIBC")"
+BINARY_PATH="$(download_binary "$VERSION" "$ARCH")"
 
 # ============================================================================
 # Install binary

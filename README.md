@@ -28,26 +28,16 @@ curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | ba
 curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --no-service
 ```
 
-### Install static (musl) binary
-
-For musl-based distros (Alpine, Void, etc.):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/deyoyk/easy-ci/main/install.sh | bash -s -- --musl
-```
-
 ### Manual install
 
 Download the latest binary for your architecture from [GitHub Releases](https://github.com/deyoyk/easy-ci/releases).
 
 | Architecture | Archive |
 |-------------|---------|
-| x86_64 (glibc) | `eci-linux-x86_64.tar.gz` |
-| ARM64 (glibc) | `eci-linux-aarch64.tar.gz` |
-| ARMv7 (glibc) | `eci-linux-armv7.tar.gz` |
-| i686 (glibc) | `eci-linux-i686.tar.gz` |
-| x86_64 (musl) | `eci-linux-x86_64-musl.tar.gz` |
-| ARM64 (musl) | `eci-linux-aarch64-musl.tar.gz` |
+| x86_64 | `eci-linux-x86_64.tar.gz` |
+| ARM64 | `eci-linux-aarch64.tar.gz` |
+| ARMv7 | `eci-linux-armv7.tar.gz` |
+| i686 | `eci-linux-i686.tar.gz` |
 
 ```bash
 # Example for Linux x86_64
@@ -158,12 +148,12 @@ auto_rollback_on_unhealthy = true
 
 ## Supported Architectures
 
-| Architecture | GLIBC | Musl |
-|-------------|-------|------|
-| x86_64 | Supported | Supported |
-| ARM64 | Supported | Supported |
-| ARMv7 | Supported | — |
-| i686 | Supported | — |
+| Architecture | Status |
+|-------------|--------|
+| x86_64 | Supported |
+| ARM64 | Supported |
+| ARMv7 | Supported |
+| i686 | Supported |
 
 ## Development
 

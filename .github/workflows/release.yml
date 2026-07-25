@@ -89,14 +89,6 @@ jobs:
             os: ubuntu-latest
             artifact: eci-linux-i686
             archive: eci-linux-i686.tar.gz
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: eci-linux-aarch64-musl
-            archive: eci-linux-aarch64-musl.tar.gz
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: eci-linux-x86_64-musl
-            archive: eci-linux-x86_64-musl.tar.gz
 
     steps:
       - uses: actions/checkout@v4
@@ -136,10 +128,6 @@ jobs:
               echo "CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=gcc" >> $GITHUB_ENV
               ;;
           esac
-
-      - name: Install musl-tools for musl targets
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get install -y musl-tools
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p eci
@@ -188,12 +176,10 @@ jobs:
 
             | Architecture | Archive |
             |-------------|---------|
-            | x86_64 (glibc) | `eci-linux-x86_64.tar.gz` |
-            | ARM64 (glibc) | `eci-linux-aarch64.tar.gz` |
-            | ARMv7 (glibc) | `eci-linux-armv7.tar.gz` |
-            | i686 (glibc) | `eci-linux-i686.tar.gz` |
-            | x86_64 (musl) | `eci-linux-x86_64-musl.tar.gz` |
-            | ARM64 (musl) | `eci-linux-aarch64-musl.tar.gz` |
+            | x86_64 | `eci-linux-x86_64.tar.gz` |
+            | ARM64 | `eci-linux-aarch64.tar.gz` |
+            | ARMv7 | `eci-linux-armv7.tar.gz` |
+            | i686 | `eci-linux-i686.tar.gz` |
           files: artifacts/*
 
   docker:
