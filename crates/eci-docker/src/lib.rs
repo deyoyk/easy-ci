@@ -59,7 +59,22 @@ impl DockerClient {
         let tar_path = std::env::temp_dir().join(format!("{}.tar", app_name));
         let tar_file = std::fs::File::create(&tar_path)?;
         let mut tar = TarBuilder::new(tar_file);
-        tar.append_dir_all(".", context_path)?;
+
+        for entry in std::fs::read_dir(context_path)
+            .map_err(|e| EciError::Docker(format!("Failed to read context: {}", e)))?
+        {
+            let entry = entry.map_err(|e| EciError::Docker(format!("Read dir error: {}", e)))?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str == ".git" || name_str == "target" || name_str == "node_modules" {
+                continue;
+            }
+            if entry.path().is_dir() {
+                tar.append_dir_all(&name, entry.path())?;
+            } else {
+                tar.append_file(&name, &mut std::fs::File::open(entry.path())?)?;
+            }
+        }
         tar.finish()?;
 
         let build_opts = BuildImageOptions {
