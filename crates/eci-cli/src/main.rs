@@ -134,9 +134,11 @@ fn cmd_init() -> eci_core::error::Result<()> {
 
     if let Ok(ref cfg) = existing {
         println!("  {}  Config found at ~/.eci/config.toml", success("✔"));
-        println!("  Current GitHub token: {}{}",
+        println!(
+            "  Current GitHub token: {}{}",
             &cfg.github.token[..4.min(cfg.github.token.len())],
-            "*".repeat(cfg.github.token.len().saturating_sub(4)));
+            "*".repeat(cfg.github.token.len().saturating_sub(4))
+        );
         println!("  Docker host: {}", cfg.docker.host);
         println!();
 
@@ -151,7 +153,10 @@ fn cmd_init() -> eci_core::error::Result<()> {
         }
 
         println!();
-        println!("  {}", header("Update config (press Enter to keep current value)"));
+        println!(
+            "  {}",
+            header("Update config (press Enter to keep current value)")
+        );
         println!();
 
         let github_token: String = Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
