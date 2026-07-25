@@ -184,29 +184,29 @@ impl GitHubClient {
     }
 
     pub fn clone_repo(clone_url: &str, dest: &PathBuf, token: &str) -> Result<()> {
-        use git2::build::RepoBuilder;
-        use git2::{Cred, FetchOptions, RemoteCallbacks};
+        use std::process::Command;
 
         debug!(url = clone_url, dest = %dest.display(), "Cloning repository");
 
         let _ = std::fs::remove_dir_all(dest);
 
-        let mut callbacks = RemoteCallbacks::new();
-        let token = token.to_string();
-        let t = token.clone();
-        callbacks.credentials(move |_url, _username_from_url, _allowed| {
-            Cred::userpass_plaintext("x-access-token", &t)
-        });
+        // Use git CLI directly - more reliable with auth
+        let url_with_token = clone_url.replacen("https://", &format!("https://x:{}@", token), 1);
 
-        let mut fetch_options = FetchOptions::new();
-        fetch_options.remote_callbacks(callbacks);
+        let output = Command::new("git")
+            .arg("clone")
+            .arg(&url_with_token)
+            .arg(dest)
+            .output()
+            .map_err(|e| EciError::GitHub(format!("Failed to run git: {}", e)))?;
 
-        let mut builder = RepoBuilder::new();
-        builder.fetch_options(fetch_options);
-
-        builder
-            .clone(clone_url, dest)
-            .map_err(|e| EciError::GitHub(format!("Failed to clone repo: {}", e)))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(EciError::GitHub(format!(
+                "Failed to clone repo: {}",
+                stderr.trim()
+            )));
+        }
 
         info!(dest = %dest.display(), "Repository cloned successfully");
         Ok(())
