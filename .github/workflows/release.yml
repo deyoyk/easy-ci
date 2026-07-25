@@ -120,18 +120,19 @@ jobs:
       - name: Install cross-compilation tools
         run: |
           sudo apt-get update
+          sudo apt-get install -y pkg-config cmake perl
           case "${{ matrix.target }}" in
             aarch64-*)
-              sudo apt-get install -y gcc-aarch64-linux-gnu
+              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
               echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
               echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
               ;;
             armv7-*)
-              sudo apt-get install -y gcc-arm-linux-gnueabihf
+              sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
               echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
               ;;
             i686-*)
-              sudo apt-get install -y gcc-multilib
+              sudo apt-get install -y gcc-multilib g++-multilib
               echo "CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=gcc" >> $GITHUB_ENV
               ;;
           esac
